@@ -6,13 +6,21 @@
 #
 # Nothing downstream is trusted until everything upstream of it has passed.
 # In particular the RTL is never compared against numbers written by hand: the
-# expected offsets come from validation/reference.py, which is itself checked
-# against validation/verify_conjecture.py and against exhaustive enumeration.
+# expected offsets and bits come from validation/reference.py, which is itself
+# checked against validation/verify_conjecture.py and against exhaustive
+# enumeration.
 #
-#   ./scripts/run_sim.sh            # everything except the 10k soak
-#   ./scripts/run_sim.sh --big      # ... including the 10k soak
+# Both halves of the BCMC definition are covered: bcmc_core (the prefix
+# transform) and bcmc_cell (the characteristic function). bcmc_row and
+# bcmc_column add no mathematics -- they are replication of the cell, and the
+# testbenches prove that by comparing every one of their bits against a
+# separately instantiated bcmc_cell.
+#
+#   ./scripts/run_sim.sh            # everything except the soak files
+#   ./scripts/run_sim.sh --big      # ... including the soak files
 #   ./scripts/run_sim.sh --quick    # skip the Icarus path
 #===========================================================================
+
 
 set -u -o pipefail
 

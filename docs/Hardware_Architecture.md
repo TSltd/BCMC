@@ -359,6 +359,57 @@ The representation is therefore lossless.
 
 ---
 
+# Stateful Core, Stateless Evaluator
+
+The two halves of BCMC meet at the canonical prefix representation.
+
+```text
+                            Stateful
+
+        Weights  ──────────────────────────────►  Offsets
+
+                            BCMC Core
+
+                                 │
+                                 ▼
+
+                  Canonical Prefix Representation
+
+                                 │
+                                 ▼
+
+        Offsets  ──────────────────────────────►  Matrix Bits
+
+                          BCMC Evaluator
+
+                            Stateless
+```
+
+They are complementary halves, and their differences are not arbitrary — every
+one of them is inherited from the mathematics:
+
+```text
+                BCMC Core                  BCMC Evaluator
+────────────────────────────────────────────────────────────────
+Mathematics     Prefix recursion           Characteristic function
+State           Prefix accumulator         None
+Clock           Required                   None
+Operation       Prefix transform           Point evaluation
+Reduction       Conditional subtract       Conditional add
+Latency         O(C)                       O(1)
+```
+
+The Core is sequential because a prefix sum is **recursive**: `offset[i+1]`
+cannot be known without `offset[i]`.
+
+The Evaluator is combinational because the characteristic function is
+**pointwise**: `M(i,j)` depends on nothing but `weight[i]`, `offset[i]`, `j`
+and `N`.
+
+Neither property was chosen. Both were read off the definition.
+
+---
+
 # BCMC Evaluator
 
 ## Purpose
@@ -376,6 +427,22 @@ offsets[]
 the Evaluator computes arbitrary elements of the matrix on demand.
 
 Unlike the Core, the Evaluator performs no prefix computations.
+
+## The Evaluator is a Concept, not a Module
+
+"BCMC Evaluator" names an **architectural role**. It does not imply a Verilog module, and there is deliberately no `bcmc_evaluator.v`.
+
+The Core happens to map onto exactly one module, `bcmc_core.v`, because a prefix recursion is one indivisible sequential process. The Evaluator maps onto
+
+```text
+bcmc_cell.v      the characteristic function itself
+bcmc_row.v       N cells, one weight/offset pair
+bcmc_column.v    C cells, one column index
+```
+
+and a wrapper multiplexing between them would add no mathematics, own no state, and serve no consumer that currently exists. It will be introduced if and when something genuinely requires it.
+
+Note also what the Evaluator does **not** contain: storage. It is given `weights[]` and `offsets[]`; it does not hold them. Whoever owns the canonical prefix representation presents it. This is what keeps the Evaluator stateless in fact and not merely in description.
 
 ---
 
@@ -401,69 +468,108 @@ This equation completely defines the binary matrix.
 
 ---
 
-# Evaluation Operations
+## The Wrap is not a Division
 
-The Evaluator supports three fundamental operations.
+The Core's reduction was cheap because `0 ≤ wᵢ ≤ N`. The Evaluator's is cheap for the mirror-image reason.
 
-## Cell Evaluation
-
-Input
+The offsets produced by the Core satisfy `0 ≤ offset[i] < N`, and a column index satisfies `0 ≤ j < N`, hence
 
 ```text
-row
-
-column
+−N < j − offset[i] < N,
 ```
 
-Output
+so the reduction modulo `N` is a **single comparison and a single addition**:
 
 ```text
-single bit
+diff = j − offset[i]
+
+delta = (j < offset[i]) ? diff + N : diff
 ```
 
-representing
+after which
 
 ```text
-M(row,column)
+M(i,j) = (delta < weight[i]).
 ```
+
+No divider is ever required here either.
+
+The symmetry is exact, and it is not a coincidence — both facts are consequences of the same hypothesis of Lemma 2:
+
+```text
+Core        offset + weight     →   conditional subtract
+Evaluator   column − offset     →   conditional add
+```
+
+The Core wraps _forwards_ and so may overshoot `N`; the Evaluator wraps _backwards_ and so may undershoot `0`. One subtracts `N`, the other adds it.
 
 ---
 
-## Row Evaluation
+# Architectural Decomposition
 
-Input
+> The BCMC Evaluator introduces no new mathematics.
+>
+> Every operation performed by the Evaluator is an evaluation of the BCMC characteristic function.
+>
+> Cell, row and column queries differ only in which argument or arguments are held constant.
 
-```text
-row
-```
-
-Output
-
-```text
-N-bit vector
-```
-
-containing the complete row.
+This is the load-bearing statement of the entire Evaluator design. It has a direct consequence for the hardware: **only the cell is a design.** Everything else is replication.
 
 ---
 
-## Column Evaluation
-
-Input
+# Projections of the Characteristic Function
 
 ```text
-column
+Matrix
+   │
+   ▼
+ Rows
+   │
+   ▼
+Columns
+   │
+   ▼
+ Cells
 ```
 
-Output
+These are not four operations. They are four **projections** of the same function `M(i,j)`, distinguished only by which arguments are bound:
+
+| Projection | Bound    | Free     | Result       |
+| ---------- | -------- | -------- | ------------ |
+| Cell       | `i`, `j` | –        | 1 bit        |
+| Row        | `i`      | `j`      | `N` bits     |
+| Column     | `j`      | `i`      | `C` bits     |
+| Matrix     | –        | `i`, `j` | `C × N` bits |
+
+The Evaluator has no opinion about which projection an application should use. Hardware implementations should choose whichever projection best matches the surrounding system: a slot-driven controller naturally wants **columns**, one bit per row per time slot; a per-channel analysis might genuinely want **rows**; an addressable interface wants **cells**. All three are the same mathematics, evaluated with the arguments grouped differently.
+
+## Bit Ordering
+
+Bit ordering is specified, never left to convention.
+
+For a row query, the `N`-bit result is indexed by column:
 
 ```text
-C-bit vector
+bit[0]   = column 0
+bit[1]   = column 1
+...
+bit[N−1] = column N−1
 ```
 
-containing the complete column.
+For a column query, the `C`-bit result is indexed by row:
 
-This operation evaluates the characteristic function independently for every row.
+```text
+bit[0]   = row 0
+bit[1]   = row 1
+...
+bit[C−1] = row C−1
+```
+
+## A Note on Width
+
+Because a row is `N` bits wide and `N` is a runtime value, any fully parallel row module must be built to a compile-time maximum. This is a property of the projection, not of BCMC: a combinational row for `N = 65535` would be 65,535 cells, which no one should build.
+
+Parallel row and column modules therefore exist chiefly to make the replication claim **verifiable**. Large implementations should instantiate the cell directly, as many times as their traversal strategy actually requires.
 
 ---
 

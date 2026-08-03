@@ -1,5 +1,5 @@
 //===========================================================================
-// vectors.cpp -- reader for the BCMC test-vector format
+// vectors.cpp -- reader for the BCMC test-vector formats
 //===========================================================================
 
 #include "vectors.h"
@@ -131,6 +131,138 @@ std::vector<Case> load_vectors(const std::string& path) {
 
         c.offsets.reserve(c.C);
         for (uint32_t i = 0; i < c.C; ++i) c.offsets.push_back(t.expect_number());
+
+        cases.push_back(std::move(c));
+    }
+
+    if (cases.empty()) {
+        throw std::runtime_error(path + ": no cases found");
+    }
+    return cases;
+}
+
+std::vector<CellCase> load_cell_vectors(const std::string& path) {
+    Tokens                t(path);
+    std::vector<CellCase> cases;
+
+    std::string tok;
+    int         line = 0;
+
+    // Five numbers per case, on one line by convention but the reader does not
+    // depend on that: whitespace is whitespace.
+    while (t.next(tok, line)) {
+        CellCase c;
+        c.line = line;
+
+        std::size_t   used  = 0;
+        unsigned long value = 0;
+        try {
+            value = std::stoul(tok, &used, 10);
+        } catch (const std::exception&) {
+            used = 0;
+        }
+        if (used != tok.size()) {
+            throw std::runtime_error(t.where(line) + "expected a number, got '" +
+                                     tok + "'");
+        }
+        c.N = static_cast<uint32_t>(value);
+
+        c.weight = t.expect_number();
+        c.offset = t.expect_number();
+        c.column = t.expect_number();
+        c.bit    = t.expect_number();
+
+        if (c.bit > 1) {
+            throw std::runtime_error(t.where(c.line) +
+                                     "expected bit to be 0 or 1");
+        }
+
+        cases.push_back(c);
+    }
+
+    if (cases.empty()) {
+        throw std::runtime_error(path + ": no cases found");
+    }
+    return cases;
+}
+
+std::vector<MatrixCase> load_matrix_vectors(const std::string& path) {
+    Tokens                  t(path);
+    std::vector<MatrixCase> cases;
+
+    std::string tok;
+    int         line = 0;
+
+    // Keyword-led, so the shape of a case is self-describing and C = 0 needs no
+    // special handling: the W and O lines simply carry no numbers.
+    while (t.next(tok, line)) {
+        if (tok != "N") {
+            throw std::runtime_error(t.where(line) +
+                                     "expected 'N' at the start of a case, got '" +
+                                     tok + "'");
+        }
+        MatrixCase c;
+        c.line = line;
+        c.N    = t.expect_number();
+
+        tok = t.expect(line);
+        if (tok != "C") {
+            throw std::runtime_error(t.where(line) + "expected 'C', got '" +
+                                     tok + "'");
+        }
+        c.C = t.expect_number();
+
+        tok = t.expect(line);
+        if (tok != "W") {
+            throw std::runtime_error(t.where(line) + "expected 'W', got '" +
+                                     tok + "'");
+        }
+        c.weights.reserve(c.C);
+        for (uint32_t i = 0; i < c.C; ++i) c.weights.push_back(t.expect_number());
+
+        tok = t.expect(line);
+        if (tok != "O") {
+            throw std::runtime_error(t.where(line) + "expected 'O', got '" +
+                                     tok + "'");
+        }
+        c.offsets.reserve(c.C);
+        for (uint32_t i = 0; i < c.C; ++i) c.offsets.push_back(t.expect_number());
+
+        c.rows.reserve(c.C);
+        for (uint32_t i = 0; i < c.C; ++i) {
+            tok = t.expect(line);
+            if (tok != "R") {
+                throw std::runtime_error(t.where(line) + "expected 'R' for row " +
+                                         std::to_string(i) + ", got '" + tok + "'");
+            }
+            const std::string bits = t.expect(line);
+            if (bits.size() != c.N) {
+                throw std::runtime_error(t.where(line) + "row " +
+                                         std::to_string(i) + " has " +
+                                         std::to_string(bits.size()) +
+                                         " bits, expected " +
+                                         std::to_string(c.N));
+            }
+            std::vector<uint8_t> row;
+            row.reserve(c.N);
+            for (char ch : bits) {
+                if (ch != '0' && ch != '1') {
+                    throw std::runtime_error(t.where(line) +
+                                             "row bits must be '0' or '1', got '" +
+                                             std::string(1, ch) + "'");
+                }
+                row.push_back(static_cast<uint8_t>(ch == '1'));
+            }
+            c.rows.push_back(std::move(row));
+        }
+
+        tok = t.expect(line);
+        if (tok != "L") {
+            throw std::runtime_error(t.where(line) + "expected 'L', got '" +
+                                     tok + "'");
+        }
+        c.occupancy.reserve(c.N);
+        for (uint32_t j = 0; j < c.N; ++j) c.occupancy.push_back(t.expect_number());
 
         cases.push_back(std::move(c));
     }

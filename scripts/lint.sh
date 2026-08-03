@@ -22,8 +22,13 @@ status=0
 # checks, which is most of what catches real bugs in small RTL.
 #---------------------------------------------------------------------------
 
+# Each file is linted as its own top module, so a module that instantiates
+# another (bcmc_row and bcmc_column instantiate bcmc_cell) needs rtl/ on the
+# library search path. -y is how both tools spell that.
+#
 # rtl/ still contains empty placeholder files for modules that are deliberately
 # not written yet (see rtl/README.md). An empty file is reported, not linted.
+
 if command -v "$VERILATOR" >/dev/null 2>&1; then
     echo "== verilator --lint-only -Wall =="
     for f in rtl/*.v; do
@@ -33,7 +38,8 @@ if command -v "$VERILATOR" >/dev/null 2>&1; then
             echo "empty (not written yet)"
             continue
         fi
-        if out=$("$VERILATOR" --lint-only -Wall --top-module "$top" "$f" 2>&1); then
+        if out=$("$VERILATOR" --lint-only -Wall -y rtl +libext+.v \
+                              --top-module "$top" "$f" 2>&1); then
 
             echo "clean"
         else
@@ -64,8 +70,9 @@ if command -v "$IVERILOG" >/dev/null 2>&1; then
             echo "empty (not written yet)"
             continue
         fi
-        if out=$("$IVERILOG" -g2005 -Wall -Wno-timescale -t null \
+        if out=$("$IVERILOG" -g2005 -Wall -Wno-timescale -t null -y rtl \
                              -s "$top" "$f" 2>&1) && [ -z "$out" ]; then
+
 
             echo "clean"
         else

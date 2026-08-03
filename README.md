@@ -15,7 +15,7 @@ The long-term goal is to establish BCMC as a reusable hardware primitive for det
 
 # Project Status
 
-**Current release:** **v0.2**
+**Current release:** **v0.3**
 
 ✔ Mathematical specification complete
 
@@ -25,10 +25,16 @@ The long-term goal is to establish BCMC as a reusable hardware primitive for det
 
 ✔ Hardware architecture defined
 
-✔ BCMC Core RTL complete, lint-clean and verified against the Python reference
-model by two independent simulators
+✔ BCMC Core RTL complete: the prefix transform `weights[] → offsets[]`
 
-⏳ BCMC Evaluator RTL next (v0.3)
+✔ BCMC Evaluator RTL complete: the characteristic function `M(i, j)`, plus its
+row and column projections
+
+✔ All of it lint-clean and verified against the Python reference model by two
+independent simulators — including **exhaustive** verification of the
+characteristic function for small `N`
+
+⏳ Memory-mapped bus interface next (v0.4)
 
 ---
 
@@ -171,7 +177,13 @@ computes the **canonical prefix representation** `(weights[], offsets[])`, which
 is a lossless representation of the canonical BCMC matrix and is the internal
 representation used by the hardware architecture.
 
-The BCMC Evaluator computes arbitrary elements of the BCMC matrix on demand.
+The BCMC Evaluator computes arbitrary elements of the BCMC matrix on demand. It
+is an **architectural concept, not a module**: all of its mathematics lives in a
+single purely combinational `rtl/bcmc_cell.v`, because `M(i, j)` depends on
+nothing but its own arguments. Cell, row, column and matrix are four
+**projections** of that one function, and neither rows nor columns are
+privileged; `bcmc_row.v` and `bcmc_column.v` add no arithmetic at all and are
+verified to be nothing but replicated cells.
 
 Traversal order and application semantics are intentionally excluded from the BCMC definition and belong to downstream observer implementations.
 
@@ -203,12 +215,13 @@ are deliberately _not_ in it.
 - BCMC Core RTL: one prefix accumulator, no RAM, no divider
 - Equivalence against the reference model under Verilator and Icarus Verilog
 
-## v0.3 — the BCMC Evaluator
+## v0.3 — the BCMC Evaluator ✔
 
-- Cell evaluator
-- Row evaluator
-- Column evaluator
-- Matrix-level equivalence tests
+- The characteristic function in hardware: purely combinational, no clock, no state
+- `mod N` as one comparator and one conditional add — the mirror of the Core's subtract
+- Exhaustive verification: **every** query for `N ≤ 8`, swept to `N ≤ 40`
+- Row and column projections, proven to be nothing but replicated cells
+- Row conservation and the Balance Theorem checked on assembled RTL matrices
 
 ## v0.4 — making it addressable
 
