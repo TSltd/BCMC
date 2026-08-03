@@ -1,0 +1,23 @@
+# Simulation build trees
+sim/build/
+sim/build-icarus/
+
+# Waveforms are outputs, not sources
+sim/waves/*.vcd
+sim/waves/*.fst
+*.vcd
+*.fst
+
+# The 10k soak file is ~1.8 MiB and is reproducible byte for byte from
+# validation/gen_vectors.py --big (SEED is fixed), so it is not tracked.
+sim/vectors/core_random_10k.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# FPGA vendor output
+fpga/*/build/
+*.fs
+*.bin
+*.rpt
