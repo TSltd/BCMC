@@ -333,6 +333,8 @@ The diagram fixes the following, which therefore never require re-deciding.
 5. `C = 0` is legal: `start` raises `busy` for one cycle, no offsets are emitted, and `done` pulses.
 6. `N ≥ 1` and `0 ≤ weight_in ≤ N` are preconditions, not behaviours. Violating them is outside the specification (see the necessity of `wᵢ ≤ N` in `docs/Proof.md`).
 
+These rules describe the interface between the Core and **whatever presents weights to it** — they are not a software interface. Software never sees `weight_valid`, `offset_valid`, `busy` or `done` in this form. A bus wrapper owns the handshake and exposes it as a register write that starts a transform and a status bit that reports completion. That translation is specified in `docs/Register_Map.md`, which is the contract for the programmer's model in the same way this section is the contract for the Core's pins.
+
 ---
 
 # Canonical Prefix Representation
@@ -356,6 +358,8 @@ Every valid BCMC matrix can be reconstructed uniquely from this representation.
 Conversely, every canonical prefix representation corresponds to exactly one BCMC matrix.
 
 The representation is therefore lossless.
+
+Being lossless is what makes the representation worth **storing**, and the Core deliberately does not store it: it streams weights in and offsets out, holding only the accumulator. Storage is the business of whichever component the representation persists in. The first such component is the memory-mapped peripheral, where the two halves of the pair appear as the `WEIGHT` and `OFFSET` windows of `docs/Register_Map.md` — software writes one half, the Core produces the other, and the Evaluator reads both. The asymmetry of those windows, one writable and one not, is that sentence expressed as an address map.
 
 ---
 
@@ -441,6 +445,8 @@ bcmc_column.v    C cells, one column index
 ```
 
 and a wrapper multiplexing between them would add no mathematics, own no state, and serve no consumer that currently exists. It will be introduced if and when something genuinely requires it.
+
+When a consumer does require a choice of projection, the choice belongs to that consumer, not to a new Evaluator module. A memory-mapped interface is the first such consumer: `docs/Register_Map.md` gives it a `CELL` register for the cell projection and a `COLUMN` window for the column projection, and the address a program reads is what selects between them. The multiplexer is address decoding in a bus adapter — it is not mathematics, which is precisely why it does not live here.
 
 Note also what the Evaluator does **not** contain: storage. It is given `weights[]` and `offsets[]`; it does not hold them. Whoever owns the canonical prefix representation presents it. This is what keeps the Evaluator stateless in fact and not merely in description.
 

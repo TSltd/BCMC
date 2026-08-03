@@ -28,8 +28,10 @@ MAXLEN=100
 # Files whose layout is ours to police. Makefiles need tabs, so they are out.
 mapfile -t FILES < <(
     ls rtl/*.v rtl/*.vh sim/*.v sim/*.cpp sim/common/*.cpp sim/common/*.h \
+       sw/*.c sw/*.h \
        validation/reference.py validation/test_reference.py \
-       validation/gen_vectors.py 2>/dev/null
+       validation/gen_vectors.py validation/bcmc_periph.py \
+       validation/test_periph.py validation/gen_wb_vectors.py 2>/dev/null
 )
 
 status=0
@@ -82,8 +84,9 @@ fi
 
 if command -v clang-format >/dev/null 2>&1; then
     if [ "$FIX" -eq 1 ]; then
-        echo "  clang-format: formatting sim/"
-        clang-format -i sim/*.cpp sim/common/*.cpp sim/common/*.h
+        echo "  clang-format: formatting sim/ and sw/"
+        clang-format -i sim/*.cpp sim/common/*.cpp sim/common/*.h \
+                        sw/*.c sw/*.h
     else
         echo "  clang-format: available (use --fix to apply)"
     fi

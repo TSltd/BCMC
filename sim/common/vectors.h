@@ -49,10 +49,36 @@
 // row_bits[0] is column 0. L is the column occupancy vector: the quantity the
 // Balance Theorem constrains.
 //
+// BUS FORMAT (wb_*.txt) -- one bus access per line, for rtl/bcmc_wb.v:
+//
+//     # op  adr  sel  data      exp  rdata
+//     L S1 Probe
+//     R     000  F    00000000  ACK  42434D43
+//     W     014  F    00000008  ACK  00000000
+//     R     048  F    00000000  ERR  00000000
+//     P     010  F    00000002  ACK  00000002
+//
+// Every field is hexadecimal. Unlike the other three formats this one records
+// a *conversation* rather than a set of independent cases, so order matters
+// and the file must be replayed from the top. The ops are:
+//
+//     Z  reset the peripheral
+//     L  a label; the rest of the line is free text, for failure messages
+//     R  read  adr with byte enables sel; expect ACK and rdata, or ERR
+//     W  write data to adr with byte enables sel; expect ACK or ERR
+//     P  poll adr until (read & data) == rdata, i.e. software's wait loop
+//
+// P exists because the Python model in validation/bcmc_periph.py has no clock:
+// a transform there completes between one access and the next, so a recorded
+// STATUS read would carry a value the hardware does not reach for several more
+// cycles. What the two share is not the value but the wait, so the wait is
+// what gets recorded.
+//
 //===========================================================================
 
 #ifndef BCMC_SIM_VECTORS_H
 #define BCMC_SIM_VECTORS_H
+
 
 #include <cstdint>
 #include <string>
@@ -100,11 +126,30 @@ struct MatrixCase {
     }
 };
 
+// One line of a bus conversation, as validation/gen_wb_vectors.py recorded it
+// from validation/bcmc_periph.py. The whole file is one ordered dialogue: a
+// replayer must run it from the top, and may not skip an op it does not care
+// about, because every op is a state change or an assertion about one.
+struct BusOp {
+    enum Kind { kReset, kLabel, kRead, kWrite, kPoll };
+
+    Kind        kind  = kReset;
+    uint32_t    adr   = 0;
+    uint32_t    sel   = 0xF;
+    uint32_t    data  = 0;  // written value, or the poll mask
+    uint32_t    rdata = 0;  // expected read value, or the poll target
+    bool        err   = false;  // the access must be refused
+    std::string label;          // kLabel only
+    int         line  = 0;      // line the op came from, for messages
+};
+
 // Parses `path`. Throws std::runtime_error on any malformed input; a vector
 // file that cannot be parsed is a failure, never something to skip over.
 std::vector<Case>       load_vectors(const std::string& path);
 std::vector<CellCase>   load_cell_vectors(const std::string& path);
 std::vector<MatrixCase> load_matrix_vectors(const std::string& path);
+std::vector<BusOp>      load_bus_vectors(const std::string& path);
+
 
 }  // namespace bcmc
 

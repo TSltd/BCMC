@@ -9,6 +9,12 @@ Proof  ->  Python reference  ->  test vectors  ->  RTL  ->  simulators  ->  FPGA
 
 ---
 
+v0.1–v0.3 Mathematical primitive
+
+v0.4–v0.5 Integration
+
+v1.0 Release
+
 ```
 v0.1  -- the mathematics                                            [ done ]
 ├── Mathematics complete
@@ -37,17 +43,41 @@ v0.3  -- the BCMC Evaluator                                         [ done ]
 ├── Verilator harnesses               sim/bcmc_{cell,row,column}_test.cpp
 └── Icarus testbenches                sim/tb_{cell,row,column}.v
 
-v0.4  -- making it addressable
-├── Wishbone interface
-├── AXI-Lite interface (optional)
-└── Software driver
+v0.4  -- SoC Integration
+├── v0.4a  the register map is a specification          [ done ]
+│   ├── Register map (the contract)      docs/Register_Map.md
+│   ├── Python peripheral model          validation/bcmc_periph.py
+│   └── Conformance suite                validation/test_periph.py
+├── v0.4b  the BCMC context                            [ done ]
+│   ├── MAX_C x (weight, offset)         rtl/bcmc_context.v
+│   ├── Storage and arbitration only     no N port, no C port, no mathematics
+│   ├── Verilator harness                sim/bcmc_context_test.cpp
+│   └── Icarus testbench                 sim/tb_context.v
+├── v0.4c  the Wishbone wrapper                        [ done ]
+│   ├── Canonical bus transactions       docs/Transaction_Sequences.md
+│   ├── Classic Wishbone B4 slave        rtl/bcmc_wb.v
+│   ├── Recorded bus conversations       validation/gen_wb_vectors.py
+│   ├── Bus functional model             sim/common/wb_bfm.{h,cpp}
+│   ├── Verilator harness (RTL == model) sim/bcmc_wb_test.cpp
+│   └── Icarus testbench                 sim/tb_wb.v
+└── v0.4d  the software driver                         [ done ]
+    ├── C99 driver, no malloc, no OS     sw/bcmc.{h,c}
+    ├── Primitives, then composition     bcmc_load() adds no logic of its own
+    ├── The driver against the RTL       sim/bcmc_driver_test.cpp
+    └── Two compilers, not two sims      gcc/clang, as C99 and as C++17
 
-v1.0  -- silicon and story
+v0.5  -- Reference Observers
+├── Sequential column iterator
+├── Deterministic permutation observer
+├── Observer API
+└── Example integrations
+
+v1.0  -- Reference Release
 ├── Tang Nano 20K demo
-├── Timing closure and resource report
+├── Reference FPGA implementation (includes timing closure and resource report)
 ├── Documentation
 ├── Example applications
-└── First release
+└── Stable BCMC IP release
 ```
 
 ---
@@ -100,3 +130,116 @@ wrappers.
 four projections of one function. The column projection is the one an allocator
 usually wants, because a column is a scheduling slot and the Balance Theorem is
 a statement about its popcount; that makes it useful, not fundamental.
+
+**The register map is not documentation.** v0.4a produced no RTL on purpose.
+`docs/Register_Map.md` is a specification in exactly the sense `docs/BCMC.md` is
+one, and `validation/bcmc_periph.py` is its reference model in exactly the sense
+`validation/reference.py` is. Where the model and the wrapper disagree, the
+document decides; where the document is silent, that is a bug in the document.
+The peripheral model contains no mathematics of its own -- every matrix bit it
+returns comes from `reference.py` -- so `sim/bcmc_wb_test.cpp` will be able to
+replay transactions that were validated before any bus existed.
+
+**The transaction sequences were executed before the wrapper existed.**
+`docs/Transaction_Sequences.md` is prose, so it was replayed against
+`validation/bcmc_periph.py` — every sequence, every failure row, and a check that
+each `err` leaves the peripheral bit-for-bit unchanged. It found two defects, and
+neither was in the RTL, because there was no RTL: one in the new document, and one
+in `Register_Map.md` itself, whose programming sequence said "wait until
+`STATUS.BUSY == 0`" when `BUSY` is already `0` after reset and `VALID` is the bit
+that means a matrix exists. The model's own driver helper was polling the same
+wrong bit. A specification that has never been executed is just prose, and that
+applies to the specification of the bus exactly as it applied to the mathematics.
+
+**`bcmc_context.v` is not a RAM.** It was called `bcmc_store.v` for about an
+hour. The name mattered: it is the persistent BCMC context, the object that
+exists between software and hardware, and it has three clients rather than a
+port -- software writes weights, the Core writes offsets, the Evaluator reads
+both. This is also where the RAM that v0.2 refused to put in the Core belongs.
+The Core still streams; the peripheral is simply the first component that has a
+reason to own the canonical prefix representation.
+
+**`bcmc_context.v` has no `N` port and no `C` port.** v0.4b was asked for a
+module with no BCMC mathematics in it, and a comment claiming so would have been
+worth nothing. Both equations need `N`, and the balance and conservation
+properties need `C`, so the module is given neither: it cannot express the
+mathematics even by accident, and the claim becomes structurally checkable rather
+than merely asserted. Two design questions fall out of that absence for free.
+Software cannot write an offset, because no port exists through which to try --
+the read-only `OFFSET` window below is a fact about the port list, not a rule the
+module enforces. And `load_start` clears the _whole_ offset window rather than the
+first `C` lanes, because it does not know `C`, which is exactly what the register
+map requires. The only arithmetic left in the file is `wr_ptr + 1`, which is
+addressing.
+
+**No writable `OFFSET` window.** Offsets are read-only over the bus. Letting
+software write them would make `offset[0] = 0` an accident of initialisation
+rather than a structural fact, and would admit matrices that BCMC cannot
+construct -- so the Balance Theorem would no longer describe the peripheral's
+output. This is the same door that leaving out `P_C mod N` closes.
+
+**No matrix RAM, and no row window.** A column is bounded by `MAX_C`, so it fits
+in a fixed number of registers; a row is `N` bits with `N` a run-time value, so
+it does not. The register map therefore exposes `CELL` and `COLUMN[k]` and no
+row projection, which is a fact about address spaces rather than about
+mathematics -- `rtl/bcmc_row.v` exists and is unaffected.
+
+**No `DONE` bit and no traversal registers.** A completion pulse is useless to
+polling software, so `BUSY` and `VALID` carry the state instead and `IRQ` is
+level-sensitive with write-1-to-clear. A "next column" register would be a
+traversal order, and traversal belongs to observers in v0.5, not to the bus.
+
+**The bus vectors are a recorded conversation, not a table.** Every earlier
+vector file is a list of instances of the mathematics. `wb_*.txt` could not be:
+the thing under test in v0.4c is a protocol, and a protocol has an order.
+`validation/gen_wb_vectors.py` therefore drives `validation/bcmc_periph.py`
+through the sequences of `docs/Transaction_Sequences.md` and writes down what
+happened -- five ops (`Z`, `L`, `R`, `W`, `P`), read identically by both
+simulators.
+
+**The `P` op exists because the model has no clock.** `BcmcPeripheral(latency=k)`
+makes the next `k` _accesses_ observe `BUSY`; hardware needs `C + 4` _clocks_.
+A recorded `STATUS` read taken just after `START` cannot be replayed literally
+against wires, so what gets recorded is not the value but the wait. That is the
+one place where the recording is a translation rather than a transcript, and it
+is confined to a single op so that nothing else has to be.
+
+**Every access costs three clocks, deliberately.** `bcmc_wb` qualifies a new
+access with `!wb_ack_o && !wb_err_o`, so the response is exactly one cycle wide
+even if the master holds `stb`. That is a property of the slave, not a courtesy
+of the master, and a master that drops `stb` the instant it sees `ack` can never
+tell whether the slave has it. Both masters therefore hold the request one clock
+beyond the response and inspect it. A mutation removing the qualifier survived
+the suite until they did.
+
+**A tripped `$stop` must fail the run.** Under a batch `vvp` with no terminal,
+`$stop` prints `** Continue **` and the simulation proceeds -- so a design whose
+own assertions were screaming could still reach its `PASS` line. `sim/Makefile`
+now treats any `stop called` in the transcript as a failure, whatever the
+testbench concluded. This was found by a mutation that reported as surviving and
+had in fact been detected three times over: the detection was right, the verdict
+was wrong, and the hole was in the harness rather than in the vectors.
+
+**`bcmc_load()` contains no logic of its own.** v0.4d is primitives and then
+composition, the same shape as `bcmc_cell -> bcmc_row / bcmc_column`: eight
+primitives, each one bus access, and a convenience function built only out of
+them. A claim like that is worth nothing unless it is measurable, so the harness
+counts accesses -- `bcmc_load(w, n, c)` costs exactly `C + 5`, which is what the
+primitives cost when nothing else happens. There is one stated exception:
+`bcmc_start()` is a read-modify-write, because `bcmc_wb` reloads `IRQ_EN` from
+_every_ `CTRL` write and a lone `START` would silently disarm the interrupt.
+
+**Geometry is refused locally; state never is.** `MAX_C` is discovered once from
+`CAPS`, so an out-of-range index is a fact the driver already holds: it returns
+`BCMC_ERANGE` after _zero_ accesses. `BUSY` and `VALID` are not knowable without
+asking, so the driver does not guess -- it issues the access, lets the wrapper
+`ERR`, and reports `BCMC_EREFUSED` after _exactly one_. Both counts are asserted,
+which is what stops the driver from drifting into either duplicating the
+wrapper's state machine or pretending to know the part's geometry.
+
+**Two compilers instead of two simulators.** Every other component is checked by
+Verilator and Icarus reading the same vectors. A C driver cannot be: Verilog
+simulators do not compile C. The independent second opinion for v0.4d is
+therefore a second toolchain rather than a second simulator -- `sw/bcmc.c` is
+built by gcc and clang, as C99 and again as C++17, and the harness compiles the
+real file rather than a copy of it.

@@ -273,4 +273,104 @@ std::vector<MatrixCase> load_matrix_vectors(const std::string& path) {
     return cases;
 }
 
+//---------------------------------------------------------------------------
+// Bus format
+//
+// Line oriented rather than token oriented, because an `L` label runs to the
+// end of its line. The fields are hexadecimal without an `0x` prefix so that
+// Verilog's %h and C++'s std::stoul(.., 16) read the same characters.
+//---------------------------------------------------------------------------
+
+std::vector<BusOp> load_bus_vectors(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("cannot open vector file: " + path);
+
+    std::vector<BusOp> ops;
+    std::string        raw;
+    int                line = 0;
+
+    while (std::getline(in, raw)) {
+        ++line;
+
+        std::ostringstream where;
+        where << path << ":" << line << ": ";
+
+        const std::string::size_type hash = raw.find('#');
+        if (hash != std::string::npos) raw.erase(hash);
+
+        std::istringstream fields(raw);
+        std::string        op;
+        if (!(fields >> op)) continue;  // blank, or comment only
+
+        BusOp o;
+        o.line = line;
+
+        if (op == "L") {
+            o.kind = BusOp::kLabel;
+            std::getline(fields, o.label);
+            const std::string::size_type first = o.label.find_first_not_of(" \t");
+            o.label = (first == std::string::npos) ? "" : o.label.substr(first);
+            ops.push_back(std::move(o));
+            continue;
+        }
+
+        if (op == "Z") {
+            o.kind = BusOp::kReset;
+            ops.push_back(std::move(o));
+            continue;
+        }
+
+        if (op != "R" && op != "W" && op != "P") {
+            throw std::runtime_error(where.str() + "unknown op '" + op + "'");
+        }
+
+        std::string adr, sel, data, exp, rdata;
+        if (!(fields >> adr >> sel >> data >> exp >> rdata)) {
+            throw std::runtime_error(where.str() + "expected: op adr sel data exp rdata");
+        }
+
+        auto hex = [&where](const std::string& tok) {
+            std::size_t   used  = 0;
+            unsigned long value = 0;
+            try {
+                value = std::stoul(tok, &used, 16);
+            } catch (const std::exception&) {
+                throw std::runtime_error(where.str() + "expected hex, got '" + tok + "'");
+            }
+            if (used != tok.size()) {
+                throw std::runtime_error(where.str() + "expected hex, got '" + tok + "'");
+            }
+            return static_cast<uint32_t>(value);
+        };
+
+        o.kind  = (op == "R") ? BusOp::kRead : (op == "W") ? BusOp::kWrite : BusOp::kPoll;
+        o.adr   = hex(adr);
+        o.sel   = hex(sel);
+        o.data  = hex(data);
+        o.rdata = hex(rdata);
+
+        if (exp == "ACK") {
+            o.err = false;
+        } else if (exp == "ERR") {
+            o.err = true;
+        } else {
+            throw std::runtime_error(where.str() + "expected ACK or ERR, got '" + exp + "'");
+        }
+
+        // A poll is a wait, not a refusal: there is nothing sensible for it to
+        // mean if the access it repeats is expected to fail.
+        if (o.kind == BusOp::kPoll && o.err) {
+            throw std::runtime_error(where.str() + "a P op cannot expect ERR");
+        }
+
+        ops.push_back(std::move(o));
+    }
+
+    if (ops.empty()) {
+        throw std::runtime_error(path + ": no cases found");
+    }
+    return ops;
+}
+
 }  // namespace bcmc
+

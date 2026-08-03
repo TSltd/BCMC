@@ -28,6 +28,12 @@ The first is **recursive**, so `bcmc_core.v` is sequential. The second is
 `bcmc_cell.v` is purely combinational: no clock, no reset, no state, no timing
 assumptions of any kind.
 
+`bcmc_context.v` is not a third half. It holds `(weights[], offsets[])` and
+decides who may touch them, and it contains no BCMC mathematics at all: no
+prefix sum, no modulo, no characteristic function. It does not even have an `N`
+port or a `C` port, which is what makes that claim checkable rather than merely
+asserted.
+
 ---
 
 ## The Core is a Transform, not an Accelerator
@@ -58,13 +64,15 @@ Every BCMC transform begins at `offset[0] = 0`; transforms are not chainable.
 
 ## Files
 
-| File            | Status   | Kind          | Purpose                                                       |
-| --------------- | -------- | ------------- | ------------------------------------------------------------- |
-| `bcmc_core.v`   | **v0.2** | sequential    | Streaming prefix transform: `weights[] → offsets[]`           |
-| `bcmc_pkg.vh`   | **v0.2** | —             | Shared default widths                                         |
-| `bcmc_cell.v`   | **v0.3** | combinational | The characteristic function `M(i, j)` for one `(row, column)` |
-| `bcmc_row.v`    | **v0.3** | combinational | `MAX_N` cells sharing one `(weight, offset)` — the row of `M` |
-| `bcmc_column.v` | **v0.3** | combinational | `MAX_C` cells sharing one column index — the column of `M`    |
+| File             | Status    | Kind          | Purpose                                                       |
+| ---------------- | --------- | ------------- | ------------------------------------------------------------- |
+| `bcmc_core.v`    | **v0.2**  | sequential    | Streaming prefix transform: `weights[] → offsets[]`           |
+| `bcmc_pkg.vh`    | **v0.2**  | —             | Shared default widths                                         |
+| `bcmc_cell.v`    | **v0.3**  | combinational | The characteristic function `M(i, j)` for one `(row, column)` |
+| `bcmc_row.v`     | **v0.3**  | combinational | `MAX_N` cells sharing one `(weight, offset)` — the row of `M` |
+| `bcmc_column.v`  | **v0.3**  | combinational | `MAX_C` cells sharing one column index — the column of `M`    |
+| `bcmc_context.v` | **v0.4b** | sequential    | Stores the context; arbitrates software, Core and Evaluator   |
+| `bcmc_wb.v`      | **v0.4c** | sequential    | Wishbone B4 Classic front end: the register map made real     |
 
 There is no `bcmc_evaluator.v`, and there is not going to be one. "The BCMC
 Evaluator" is an _architectural concept_ — the half of the design that evaluates
@@ -72,6 +80,10 @@ the characteristic function — and a concept does not imply a Verilog module.
 Its mathematics lives entirely in `bcmc_cell.v`; a front end that chose between
 cell, row and column queries would be a bus adapter, not evaluation logic, and
 it would belong to whatever bus it adapted to.
+
+`bcmc_wb.v` is that bus adapter, and it is named after the bus rather than after
+the concept for exactly this reason: a second front end for a different bus would
+be a sibling of it, not a replacement for the design.
 
 ---
 
@@ -230,6 +242,155 @@ may be smaller. The surplus lanes are **not** switched off and their outputs are
 Every cell in both modules therefore receives a query that satisfies the cell's
 own preconditions, which is why no masking is needed and why a mutant that
 forgets to silence them is caught immediately.
+
+---
+
+## `bcmc_context.v` — storage and arbitration, and no mathematics
+
+The Core produces offsets one at a time and forgets them; the Evaluator needs all
+of them at once, forever. `bcmc_context.v` is the module that closes that gap. It
+holds the **persistent BCMC context** — the pair `(weights[], offsets[])` — and
+decides which of its three clients may touch it.
+
+```text
+   software ──────►┐                      ┌────► weights_flat  ─┐
+                   │                      │                     ├─► the Evaluator
+   bcmc_core ─────►│    bcmc_context      ├────► offsets_flat  ─┘
+                   │  weights[] offsets[] │
+   bcmc_core ◄─────┘                      └────► sw_weight, sw_offset
+     (reads weights back)                          (indexed, for software)
+```
+
+### What is _not_ in here
+
+No prefix sum. No modulo. No characteristic function. If any of those ever
+appear in this file, responsibilities have bled across a module boundary.
+
+That is easy to say and hard to keep, so the module is built so that it cannot
+be broken quietly: **there is no `N` port and no `C` port.** Both equations need
+`N`; the balance and conservation properties need `C`. A module given neither
+cannot express BCMC mathematics even by accident. Its entire arithmetic content
+is `wr_ptr + 1`, which is addressing.
+
+The same absence settles two design questions for free:
+
+- **Software cannot write an offset**, because no port exists through which to
+  try. Offsets enter only from the Core, only while `loading`. The register map's
+  read-only `OFFSET[i]` is therefore structural, not policed.
+- **`load_start` clears the whole offset window**, not the first `C` lanes,
+  because the module does not know `C`. That happens to be exactly what the
+  register map requires (`OFFSET[C..MAX_C-1] = 0`), obtained without teaching the
+  module anything it should not know.
+
+### Flip-flops, not a RAM
+
+It was called `bcmc_store.v` for about an hour, and both halves of that name were
+wrong. It is not a store in the sense of a memory: the Evaluator reads _every_
+lane combinationally and simultaneously, through `weights_flat` and
+`offsets_flat`, so a one-port or two-port RAM cannot serve it. The storage is a
+register file, `2 · MAX_C · VAL_W` flip-flops, and that cost is the reason
+`MAX_C` is a synthesis-time bound.
+
+### Two views, one truth
+
+The indexed ports (`sw_weight`, `sw_offset`) and the flat vectors are two views
+of the same registers, never two copies. The testbenches check this directly:
+every value read through the indexed view is compared with the same lane of the
+flat view, so a mutation that shifts one view by a lane dies immediately.
+
+Reads outside `0 .. MAX_C-1` return zero rather than wrapping onto a real lane.
+
+### Ownership
+
+`loading` is the whole arbiter. `load_start` takes ownership, `load_done`
+releases it, and while it is held, software weight writes are ignored. Offset
+writes are accepted only while it is held, only up to lane `MAX_C-1`.
+
+### Preconditions
+
+Six simulation-only `$stop` assertions guarded by `` `ifndef SYNTHESIS `` cover
+the illegal traffic: writing a weight during a load, offsets arriving outside a
+load, overrunning the window, out-of-range indices. As with the Core, these are
+preconditions of the specification, not behaviours. `sim/bcmc_context_test.cpp`
+elaborates a _second_ top with `-DSYNTHESIS` so it can drive those violations and
+watch the guards hold instead of tripping the alarms; `sim/tb_context.v` does the
+opposite, driving only legal traffic with the alarms armed. The locks are tested
+in one place, the alarms watched in the other.
+
+### It is verified by composition
+
+There is no formula in this module, so its testbenches cannot check one. They
+instantiate a real `bcmc_core` alongside it instead and check the composition:
+the offsets that end up in the window are the Core's, and the Core's offsets are
+`validation/reference.py`'s.
+
+---
+
+## `bcmc_wb.v` — the register map made real
+
+Everything above computes; nothing above is addressable. `bcmc_wb.v` is the only
+module in the tree that knows what a bus is, and it is the whole of
+[`docs/Register_Map.md`](../docs/Register_Map.md) in hardware: one 4 KiB
+Wishbone B4 Classic slave containing the register file, the three windows, the
+Core, the Context and one `bcmc_column` for `CELL[row][col]`.
+
+```text
+        Wishbone B4 Classic (32-bit, word granularity)
+                        │
+                        ▼
+                   bcmc_wb.v
+        ┌───────────┬───┴────┬───────────────┐
+        ▼           ▼        ▼               ▼
+   registers   bcmc_core  bcmc_context   bcmc_column
+   ID CTRL      (the       (weights[],    (one cell of
+   STATUS…      transform)  offsets[])     the matrix)
+```
+
+### Refuse, do not oblige
+
+A slave may answer any access with `ACK` and made-up data, and nothing on the bus
+would complain. This one does not: **every access that is not exactly right
+receives `ERR`.** Unaligned, unmapped, wrong `sel`, a write to a read-only
+register, a configuration write while `BUSY`, a matrix read before `VALID` — all
+of them err, and none of them take effect. Silent success hides bugs, and a
+driver that reads a stale matrix believing it fresh is a worse outcome than a
+driver that faults.
+
+Alignment and mapping are separate conditions and are checked separately, which
+matters more than it sounds: an address may be word-aligned and unmapped, or
+unaligned and yet land inside a mapped window. The vectors probe both.
+
+### The response is exactly one cycle wide
+
+```verilog
+wire access = wb_cyc_i && wb_stb_i && !wb_ack_o && !wb_err_o;
+```
+
+A master that holds `stb` across the response cycle must not be served twice.
+That is a property of this slave and not a courtesy of the master, so both
+testbenches hold the request one clock beyond the response and inspect it. An
+access therefore costs three clocks in simulation, which buys an entire class of
+handshake bug.
+
+### `busy` is structural
+
+```verilog
+wire busy = (seq != SEQ_IDLE);
+```
+
+There is no `busy` flag to forget to clear. The sequencer — `SEQ_IDLE`,
+`SEQ_KICK`, `SEQ_STREAM` — is the only thing that says whether a transform is in
+flight, so `STATUS.BUSY`, the `E4` refusals and the weight stream all read the
+same truth. `C = 0` completes with no weight consumed, and the stream stops
+because `stream_ptr` reaches `C`, not because the Core stopped asking.
+
+### There is no `N` or `C` in the Context, so they live here
+
+`N` and `C` are registers of this module. It is `bcmc_wb.v` that bounds the
+windows, that presents `C` weights to the Core and no more, and that raises
+`VALID` when `done` arrives. The Context still knows neither — see above — and
+the division of labour is what makes the bus suites able to distinguish a
+sequencing bug from a storage bug.
 
 ---
 

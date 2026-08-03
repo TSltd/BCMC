@@ -1,6 +1,6 @@
 # Balanced Cyclic Matrix Construction (BCMC)
 
-> Reference implementation of Balanced Cyclic Matrix Construction (BCMC): mathematical specification, formal proof, Verilog IP cores, FPGA implementations and reference validation.
+> A reference implementation of the Balanced Cyclic Matrix Construction (BCMC) primitive, comprising a formal mathematical specification, executable reference model, verified RTL implementation, memory-mapped SoC interface, portable software driver, and comprehensive verification framework.
 
 **BCMC** is a deterministic construction of binary matrices from integer weight vectors. It exactly preserves prescribed row weights while producing a globally balanced column occupancy distribution.
 
@@ -15,7 +15,7 @@ The long-term goal is to establish BCMC as a reusable hardware primitive for det
 
 # Project Status
 
-**Current release:** **v0.3**
+**Current release:** **v0.4**
 
 ✔ Mathematical specification complete
 
@@ -34,16 +34,33 @@ row and column projections
 independent simulators — including **exhaustive** verification of the
 characteristic function for small `N`
 
-⏳ Memory-mapped bus interface next (v0.4)
+✔ Register map specified, and modelled in Python before any bus RTL exists —
+the same discipline that gave the mathematics a reference model
+
+✔ BCMC context RTL complete: the persistent `(weights[], offsets[])` that
+software and the Core share — storage and arbitration, and deliberately no
+mathematics at all
+
+✔ Wishbone B4 wrapper RTL complete: the register map made real, refusing with
+`err` every access that is not exactly right — verified by replaying recorded
+bus conversations from the Python peripheral model, in two simulators
+
+✔ C driver complete: eight primitives, each one bus access, and `bcmc_load()`
+built from nothing but those — compiled unmodified against the Wishbone RTL, and
+held to its cost claims by counting bus accesses
+
+⏳ Reference observers next (v0.5)
 
 ---
 
 # Repository Structure
 
 ```text
-docs/           Mathematical specification, proof and hardware architecture
+docs/           Mathematical specification, proof, architecture, register map
 
 rtl/            Generic, hardware-agnostic BCMC RTL modules
+
+sw/             Portable C99 driver: no malloc, no OS, no headers but stdint
 
 sim/            Simulation harnesses
   CMakeLists.txt    Verilator flow (primary)
@@ -51,7 +68,7 @@ sim/            Simulation harnesses
   vectors/          Test vectors generated from the Python reference model
   waves/            VCD output
 
-validation/     Python reference implementation and its own test suite
+validation/     Python reference implementation, peripheral model, test suites
 
 scripts/        lint, format and the full end-to-end pipeline
 
@@ -86,6 +103,10 @@ python3 validation/reference.py                 # the executable specification
 cd validation && python3 test_reference.py      # is the specification right?
 cd validation && python3 gen_vectors.py         # emit sim/vectors/*.txt
 
+cd validation && python3 bcmc_periph.py         # the register map, executable
+cd validation && python3 test_periph.py         # does it obey Register_Map.md?
+cd validation && python3 gen_wb_vectors.py      # record the bus conversations
+
 ./scripts/lint.sh                               # verilator -Wall, iverilog -Wall
 
 mkdir -p sim/build && cd sim/build              # Verilator: RTL == Python
@@ -95,20 +116,27 @@ cd sim && make                                  # Icarus: the same, independentl
 cd sim && make gtkwave                          # look at a waveform
 ```
 
+The `ctest` step includes `bcmc_driver_test`, which compiles `sw/bcmc.c` itself
+and drives `rtl/bcmc_wb.v` with it. `run_sim.sh` additionally rebuilds the driver
+with every C and C++ compiler it can find, since a Verilog simulator cannot give
+a second opinion on C.
+
 Requirements: Python 3, Verilator ≥ 5, CMake ≥ 3.20, a C++17 compiler, and
-optionally Icarus Verilog and gtkwave.
+optionally a second C compiler, Icarus Verilog and gtkwave.
 
 ---
 
 # Documentation
 
-| Document                              | Description                                    |
-| ------------------------------------- | ---------------------------------------------- |
-| `docs/BCMC.md`                        | Formal mathematical definition of BCMC         |
-| `docs/Proof.md`                       | Complete proof of the Balance Theorem          |
-| `docs/Verification.md`                | Exhaustive and randomized verification         |
-| `docs/Hardware_Architecture.md`       | Hardware architecture and IP specification     |
-| `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications |
+| Document                              | Description                                      |
+| ------------------------------------- | ------------------------------------------------ |
+| `docs/BCMC.md`                        | Formal mathematical definition of BCMC           |
+| `docs/Proof.md`                       | Complete proof of the Balance Theorem            |
+| `docs/Verification.md`                | Exhaustive and randomized verification           |
+| `docs/Hardware_Architecture.md`       | Hardware architecture and IP specification       |
+| `docs/Register_Map.md`                | Programmer's model: the software-facing contract |
+| `docs/Transaction_Sequences.md`       | Canonical bus transactions, in order             |
+| `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications   |
 
 ---
 
@@ -201,6 +229,23 @@ hardware is cheap. See `docs/Hardware_Architecture.md` and `rtl/README.md`.
 See `dev/ROADMAP.md` for the detailed plan, including a note on the things that
 are deliberately _not_ in it.
 
+```
+Research
+────────
+v0.1  Mathematics
+v0.2  Core
+v0.3  Evaluator
+
+Engineering
+───────────
+v0.4  SoC Integration
+v0.5  Reference Observers
+
+Release
+───────
+v1.0  Stable BCMC IP
+```
+
 ## v0.1 — the mathematics ✔
 
 - Mathematical specification
@@ -223,20 +268,43 @@ are deliberately _not_ in it.
 - Row and column projections, proven to be nothing but replicated cells
 - Row conservation and the Balance Theorem checked on assembled RTL matrices
 
-## v0.4 — making it addressable
+## v0.4 — SoC Integration
 
-- Memory-mapped peripheral interface
-- Wishbone bus support
-- Software driver
+- Register map, written as a specification rather than as documentation of an
+  implementation ✔
+- Python peripheral model, validated against the same reference vectors that
+  drive the RTL ✔
+- `bcmc_context.v`: the persistent BCMC context that software and the Core
+  share — with no `N` port and no `C` port, so "it contains no BCMC mathematics"
+  is checkable rather than merely asserted ✔
+- `bcmc_wb.v`: a Wishbone B4 Classic slave with `err` for every access that is
+  not meaningful, verified by replaying the recorded transaction sequences of
+  the Python peripheral model rather than by inventing expected values ✔
+- `sw/bcmc.{h,c}`: primitives, then composition — the real driver source
+  compiled into the Verilator harness and run against the RTL through the bus
+  functional model, with geometry refused locally at zero bus cost and state
+  refused by the wrapper at exactly one ✔
 
-## v1.0
+## v0.5 — Reference Observers
+
+- Sequential column iterator
+- Deterministic permutation observer
+- Observer API
+- Example integrations
+
+## v1.0 — Reference Release
 
 - Tang Nano 20K demonstration
-- Timing closure and resource report
-- Reference applications
-- Initial stable release
+- Reference FPGA implementation (includes timing closure and resource report)
+- Example applications
+- Stable BCMC IP release
 
----
+## Future
+
+- AXI-Lite wrapper
+- Streaming observer
+- DMA observer
+- Multi-instance BCMC
 
 # Design Philosophy
 
