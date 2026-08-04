@@ -2,20 +2,22 @@
 
 > A reference implementation of the Balanced Cyclic Matrix Construction (BCMC) primitive, comprising a formal mathematical specification, executable reference model, verified RTL implementation, memory-mapped SoC interface, portable software driver, and comprehensive verification framework.
 
-**BCMC** is a deterministic construction of binary matrices from integer weight vectors. It exactly preserves prescribed row weights while producing a globally balanced column occupancy distribution.
+**BCMC** (Balanced Cyclic Matrix Construction) is a deterministic construction of binary matrices from integer weight vectors, and a reusable hardware primitive for balanced scheduling of weighted activities. It exactly preserves prescribed row weights while producing a globally balanced column occupancy with a provable imbalance of at most one, and exposing the resulting schedule independently of traversal or execution policy.
+
+BCMC deliberately separates construction from interpretation: it constructs a canonical balanced representation, while traversal and application semantics belong entirely to downstream observers.
 
 The project consists of two complementary parts:
 
 - a mathematically rigorous specification and proof of the BCMC construction,
 - an open-source hardware implementation targeting FPGA and System-on-Chip integration.
 
-The long-term goal is to establish BCMC as a reusable hardware primitive for deterministic balanced scheduling, event generation and sparse incidence construction.
+The long-term goal is to establish BCMC as a reusable hardware primitive for deterministic balanced scheduling, balanced activation and sparse incidence construction.
 
 ---
 
 # Project Status
 
-**Current release:** **v0.4**
+**Current release:** **v0.5c**
 
 ✔ Mathematical specification complete
 
@@ -49,13 +51,29 @@ bus conversations from the Python peripheral model, in two simulators
 built from nothing but those — compiled unmodified against the Wishbone RTL, and
 held to its cost claims by counting bus accesses
 
-⏳ Reference observers next (v0.5)
+✔ Observer contract specified and given a Python reference — a traversal is
+proved to contribute order and nothing else, so the Balance Theorem survives
+being read out of sequence
+
+✔ Observer API in C complete: a sequential cursor and a seeded permuted one,
+built on the driver and nothing else — held to the Python permutation index for
+index, then run over the real Wishbone RTL, where a visit is shown to cost
+exactly one `bcmc_read_column()` and a traversal to cost nothing at all
+
+✔ Example integrations complete: three applications — a matrix printer, a GPIO
+scheduler and a mains heater controller — each runnable over either reference
+traversal, from three source files rather than six, all against the real
+verilated peripheral and never a software model of it
+
+⏳ Tang Nano 20K demonstration next (v1.0)
 
 ---
 
 # Repository Structure
 
 ```text
+README.md      Project overview and roadmap
+
 docs/           Mathematical specification, proof, architecture, register map
 
 rtl/            Generic, hardware-agnostic BCMC RTL modules
@@ -77,6 +95,10 @@ dev/            Roadmap and development notes
 fpga/           Board-specific FPGA projects
 
 examples/       Demonstration applications
+  common/             Argument parsing, traversal selection, the host seam
+  matrix_dump/        The application that only looks
+  gpio_scheduler/     One tick, one column, one port write
+  heater_controller/  Exact duty cycles with a bounded peak load
 ```
 
 ---
@@ -99,12 +121,20 @@ The entire pipeline, in that order:
 Or one stage at a time:
 
 ```bash
+# Reference model
 python3 validation/reference.py                 # the executable specification
 cd validation && python3 test_reference.py      # is the specification right?
 cd validation && python3 gen_vectors.py         # emit sim/vectors/*.txt
 
+# RTL
 cd validation && python3 bcmc_periph.py         # the register map, executable
 cd validation && python3 test_periph.py         # does it obey Register_Map.md?
+
+# Software
+cd validation && python3 observers.py           # the reference observers
+cd validation && python3 test_observers.py      # do they obey Observers.md?
+cd validation && python3 gen_observer_vectors.py  # write pi down for the C
+
 cd validation && python3 gen_wb_vectors.py      # record the bus conversations
 
 ./scripts/lint.sh                               # verilator -Wall, iverilog -Wall
@@ -114,12 +144,23 @@ cmake .. && make && ctest --output-on-failure
 
 cd sim && make                                  # Icarus: the same, independently
 cd sim && make gtkwave                          # look at a waveform
+
+./scripts/run_examples.sh                       # does the traversal matter?
 ```
 
 The `ctest` step includes `bcmc_driver_test`, which compiles `sw/bcmc.c` itself
-and drives `rtl/bcmc_wb.v` with it. `run_sim.sh` additionally rebuilds the driver
-with every C and C++ compiler it can find, since a Verilog simulator cannot give
-a second opinion on C.
+and drives `rtl/bcmc_wb.v` with it, and `bcmc_observer_test`, which stacks
+`sw/bcmc_observer.c` on top of that driver and checks its permutations against
+the ones `validation/observers.py` wrote down. `run_sim.sh` additionally rebuilds
+both with every C and C++ compiler it can find, since a Verilog simulator cannot
+give a second opinion on C.
+
+Its last step is the only one that checks a claim no single testbench can.
+`scripts/run_examples.sh` runs each example twice with nothing changed but the
+traversal, and compares the two programs' output: the summaries must be
+byte-identical, and the running logs must differ. The first says the observer
+changed nothing that was proved; the second says the observer really did change
+something. See `examples/README.md`.
 
 Requirements: Python 3, Verilator ≥ 5, CMake ≥ 3.20, a C++17 compiler, and
 optionally a second C compiler, Icarus Verilog and gtkwave.
@@ -128,15 +169,19 @@ optionally a second C compiler, Icarus Verilog and gtkwave.
 
 # Documentation
 
-| Document                              | Description                                      |
-| ------------------------------------- | ------------------------------------------------ |
-| `docs/BCMC.md`                        | Formal mathematical definition of BCMC           |
-| `docs/Proof.md`                       | Complete proof of the Balance Theorem            |
-| `docs/Verification.md`                | Exhaustive and randomized verification           |
-| `docs/Hardware_Architecture.md`       | Hardware architecture and IP specification       |
-| `docs/Register_Map.md`                | Programmer's model: the software-facing contract |
-| `docs/Transaction_Sequences.md`       | Canonical bus transactions, in order             |
-| `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications   |
+| Document                              | Description                                                     |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `docs/BCMC.md`                        | Formal mathematical definition of BCMC                          |
+| `docs/Proof.md`                       | Complete proof of the Balance Theorem                           |
+| `docs/Verification.md`                | Exhaustive and randomized verification                          |
+| `docs/Hardware_Architecture.md`       | Hardware architecture and IP specification                      |
+| `docs/Register_Map.md`                | Programmer's model: the software-facing contract                |
+| `docs/Transaction_Sequences.md`       | Canonical bus transactions, in order                            |
+| `docs/Observers.md`                   | The observer contract: what traversal may do                    |
+| `examples/README.md`                  | `Application × Traversal`, and why it is a product              |
+| `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications                  |
+| `docs/Why_BCMC.md`                    | Why would I use BCMC?                                           |
+| `docs/Design_Rationale.md`            | Why is it designed this way? Key design decisions and reasoning |
 
 ---
 
@@ -287,17 +332,75 @@ v1.0  Stable BCMC IP
 
 ## v0.5 — Reference Observers
 
-- Sequential column iterator
-- Deterministic permutation observer
-- Observer API
-- Example integrations
+Reference Observers demonstrate ways to consume the BCMC representation. They
+are not part of the BCMC definition and may be replaced or extended without
+affecting the mathematical or hardware contracts of the primitive.
 
-## v1.0 — Reference Release
+- The observer contract, written before any observer exists ✔
+- Python reference observers — sequential, and a seeded permutation ✔
+- A conformance suite that re-derives balance and conservation from the vector
+  files, so an observer cannot quietly lose a column ✔
+- `sw/bcmc_observer.{h,c}`: a pinned generator, two order builders and a cursor,
+  over the driver and nothing else — no allocation, no cached matrix, and a
+  visit that costs exactly what `bcmc_read_column()` costs, proved by counting
+  bus accesses against the verilated peripheral ✔
+- Example integrations: `Application × Traversal` as a Cartesian product —
+  `matrix_dump`, `gpio_scheduler` and `heater_controller`, each over either
+  reference traversal, with the orthogonality established by diffing program
+  output rather than asserted in a comment ✔
 
-- Tang Nano 20K demonstration
-- Reference FPGA implementation (includes timing closure and resource report)
-- Example applications
-- Stable BCMC IP release
+## v0.6 — FPGA Reference Platform
+
+- Tang Nano 20K integration
+- Resource utilisation report
+- Timing closure
+- Hardware demonstration
+- Programming examples
+
+## v0.7 — Formal Verification
+
+- SymbiYosys property suite
+- Core properties
+- Cell properties
+- Wishbone protocol properties
+- Coverage report
+
+## v0.8 — Documentation Polish
+
+- Why BCMC? - Why_BCMC.md - Why would I use BCMC?
+- Design rationale - Design_Rationale.md - Why is it designed this way?
+- Tradeoffs.md
+- Performance notes
+- Integration guide
+- API reference
+- Repository cleanup
+
+## v0.9 — Ecosystem Readiness
+
+- CI improvements
+- Packaging
+- Release artefacts
+- Issue templates
+- Contribution guide
+- Licensing review
+
+## v1.0 — Stable BCMC IP
+
+- Stable API
+- Stable RTL
+- Stable driver
+- Stable documentation
+- Reference FPGA design
+- Verification complete
+- First public release
+
+## Post-v1.0
+
+- Community review
+- Host organization discussion
+- Gather feedback
+- Address feedback
+- Future integrations
 
 ## Future
 

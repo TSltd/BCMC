@@ -46,10 +46,11 @@ if(NOT verilator_FOUND)
     "VERILATOR_ROOT to a Verilator source tree.")
 endif()
 
-set(BCMC_RTL     ${CMAKE_CURRENT_SOURCE_DIR}/../rtl)
-set(BCMC_SW      ${CMAKE_CURRENT_SOURCE_DIR}/../sw)
-set(BCMC_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/vectors)
-set(BCMC_WAVES   ${CMAKE_CURRENT_SOURCE_DIR}/waves)
+set(BCMC_RTL      ${CMAKE_CURRENT_SOURCE_DIR}/../rtl)
+set(BCMC_SW       ${CMAKE_CURRENT_SOURCE_DIR}/../sw)
+set(BCMC_EXAMPLES ${CMAKE_CURRENT_SOURCE_DIR}/../examples)
+set(BCMC_VECTORS  ${CMAKE_CURRENT_SOURCE_DIR}/vectors)
+set(BCMC_WAVES    ${CMAKE_CURRENT_SOURCE_DIR}/waves)
 
 #---------------------------------------------------------------------------
 # Shared test-vector reader
@@ -267,6 +268,97 @@ verilate(bcmc_driver_test
                  -GIDX_W=${BCMC_WB_IDX_W} -GMAX_C=${BCMC_WB_MAX_C})
 
 #---------------------------------------------------------------------------
+# sw/bcmc_observer.c: traversal, over the driver, over the peripheral
+#
+# Three layers of real code and no model anywhere: the observer calls the
+# driver, the driver drives the verilated wrapper. That is the only arrangement
+# in which "an observer contributes order and nothing else" is a statement
+# about this implementation rather than about a diagram.
+#
+# It links bcmc.c as well, because an observer that supplied its own bus access
+# would not be an observer -- docs/Observers.md says it may not reach past its
+# interface, and the interface is sw/bcmc.h.
+#
+# Like the driver target there is no Icarus counterpart, for the same reason:
+# the thing under test is a C translation unit. scripts/run_sim.sh compiles it
+# under every C compiler on the machine instead.
+#---------------------------------------------------------------------------
+
+add_executable(bcmc_observer_test bcmc_observer_test.cpp
+               ${BCMC_SW}/bcmc.c ${BCMC_SW}/bcmc_observer.c)
+target_link_libraries(bcmc_observer_test PRIVATE bcmc_sim_common)
+target_include_directories(bcmc_observer_test PRIVATE ${BCMC_SW})
+target_compile_definitions(bcmc_observer_test PRIVATE
+  BCMC_DRIVER_MAX_C=${BCMC_WB_MAX_C}
+  BCMC_DRIVER_VAL_W=${BCMC_WB_VAL_W}
+  BCMC_DRIVER_IDX_W=${BCMC_WB_IDX_W})
+
+target_compile_options(bcmc_observer_test PRIVATE
+  $<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow;-Wstrict-prototypes;-Wmissing-prototypes>)
+
+verilate(bcmc_observer_test
+  SOURCES ${BCMC_RTL}/bcmc_wb.v
+  TOP_MODULE bcmc_wb
+  PREFIX Vbcmc_wb
+  TRACE
+  INCLUDE_DIRS ${BCMC_RTL}
+  VERILATOR_ARGS -Wall -y ${BCMC_RTL} -GVAL_W=${BCMC_WB_VAL_W}
+                 -GIDX_W=${BCMC_WB_IDX_W} -GMAX_C=${BCMC_WB_MAX_C})
+
+#---------------------------------------------------------------------------
+# The examples
+#
+# Three applications, each built here so that it runs against the verilated
+# bcmc_wb rather than against a model of it. The stack is exactly the one
+# docs/Observers.md describes and nothing is stubbed out:
+#
+#     examples/<app>/<app>.c        the application: purpose
+#     examples/common/example_*.c   the shared command line and the traversal
+#     sw/bcmc_observer.c            the observer: order
+#     sw/bcmc.c                     the driver: transactions
+#     sim/example_host.cpp          the host seam, over Vbcmc_wb
+#     rtl/bcmc_wb.v                 the peripheral
+#
+# The applications are C and know nothing about Verilator; example_host.cpp is
+# the only C++ in the link, and its board-side twin is
+# examples/common/example_host_mmio.c. Which traversal an application gets is a
+# command-line argument, so the same binary exercises the whole
+# Application x Traversal product -- that is what the ctest entries below walk.
+#
+# The strict-C options are the same set the driver and observer targets use: an
+# example that only compiled cleanly with warnings off would be a poor advert
+# for a driver that compiles cleanly everywhere.
+#---------------------------------------------------------------------------
+
+set(BCMC_EXAMPLE_APPS matrix_dump gpio_scheduler heater_controller)
+
+foreach(app ${BCMC_EXAMPLE_APPS})
+  add_executable(example_${app}
+                 ${BCMC_EXAMPLES}/${app}/${app}.c
+                 ${BCMC_EXAMPLES}/common/example_config.c
+                 ${BCMC_EXAMPLES}/common/example_traversal.c
+                 example_host.cpp
+                 ${BCMC_SW}/bcmc.c
+                 ${BCMC_SW}/bcmc_observer.c)
+
+  target_link_libraries(example_${app} PRIVATE bcmc_sim_common)
+  target_include_directories(example_${app} PRIVATE
+                             ${BCMC_SW} ${BCMC_EXAMPLES}/common)
+
+  target_compile_options(example_${app} PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow;-Wstrict-prototypes;-Wmissing-prototypes>)
+
+  verilate(example_${app}
+    SOURCES ${BCMC_RTL}/bcmc_wb.v
+    TOP_MODULE bcmc_wb
+    PREFIX Vbcmc_wb
+    TRACE
+    INCLUDE_DIRS ${BCMC_RTL}
+    VERILATOR_ARGS -Wall -y ${BCMC_RTL} -GVAL_W=${BCMC_WB_VAL_W}
+                   -GIDX_W=${BCMC_WB_IDX_W} -GMAX_C=${BCMC_WB_MAX_C})
+endforeach()
+
+#---------------------------------------------------------------------------
 # Tests
 #
 # Each vector file is a separate ctest entry so that a failure names the
@@ -356,6 +448,31 @@ foreach(vec ${BCMC_MATRIX_VECTORS})
   endif()
 endforeach()
 
+# The observers, over the same matrices again -- a fourth reading of the same
+# bits, which is the point: an observer that agreed with reference.py on its
+# own vectors and nowhere else would have proved nothing. Each case is walked
+# three times (sequential, permuted, and the permuted pass rewound), so the
+# timeout is the driver's with room to spare.
+set(BCMC_OBSERVER_PRNG  ${BCMC_VECTORS}/observer_prng.txt)
+set(BCMC_OBSERVER_ORDER ${BCMC_VECTORS}/observer_order.txt)
+
+if(EXISTS ${BCMC_OBSERVER_PRNG} AND EXISTS ${BCMC_OBSERVER_ORDER})
+  foreach(vec ${BCMC_MATRIX_VECTORS})
+    if(EXISTS ${BCMC_VECTORS}/${vec}.txt)
+      add_test(NAME observer_${vec}
+               COMMAND bcmc_observer_test
+                       --prng ${BCMC_OBSERVER_PRNG}
+                       --order ${BCMC_OBSERVER_ORDER}
+                       ${BCMC_VECTORS}/${vec}.txt)
+      set_tests_properties(observer_${vec} PROPERTIES TIMEOUT 1800)
+    endif()
+  endforeach()
+else()
+  message(WARNING
+    "missing ${BCMC_OBSERVER_PRNG} or ${BCMC_OBSERVER_ORDER} -- run: "
+    "cd validation && python3 gen_observer_vectors.py")
+endif()
+
 
 # Optional soak files, produced by `python3 gen_vectors.py --big`.
 if(EXISTS ${BCMC_VECTORS}/core_random_10k.txt)
@@ -412,3 +529,33 @@ add_test(NAME driver_trace
          COMMAND bcmc_driver_test --limit 1
                  --vcd ${BCMC_WAVES}/bcmc_driver.vcd
                  ${BCMC_VECTORS}/matrix_edge.txt)
+
+# A traced pass. Worth having separately from the driver's: this waveform shows
+# COLUMN reads arriving in an order the hardware has no opinion about, which is
+# the clearest picture of what an observer is.
+if(EXISTS ${BCMC_OBSERVER_PRNG} AND EXISTS ${BCMC_OBSERVER_ORDER})
+  add_test(NAME observer_trace
+           COMMAND bcmc_observer_test --limit 1
+                   --vcd ${BCMC_WAVES}/bcmc_observer.vcd
+                   --prng ${BCMC_OBSERVER_PRNG}
+                   --order ${BCMC_OBSERVER_ORDER}
+                   ${BCMC_VECTORS}/matrix_edge.txt)
+endif()
+
+# The Application x Traversal product, walked exhaustively. Every application
+# is run under every traversal, and each self-check inside an application --
+# "exact", "ok" -- prints MISMATCH instead when it fails, so the absence of that
+# word is the verdict. These are cheap: a few thousand bus cycles each.
+#
+# What they do NOT check is that two traversals agree with each other; a single
+# process cannot, because it only ran one of them. That comparison is
+# scripts/run_examples.sh, which diffs the --summary outputs.
+foreach(app ${BCMC_EXAMPLE_APPS})
+  foreach(traversal sequential permuted)
+    add_test(NAME example_${app}_${traversal}
+             COMMAND example_${app} --traversal ${traversal} --rounds 2)
+    set_tests_properties(example_${app}_${traversal} PROPERTIES
+                         FAIL_REGULAR_EXPRESSION "MISMATCH"
+                         TIMEOUT 300)
+  endforeach()
+endforeach()

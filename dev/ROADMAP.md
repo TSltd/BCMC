@@ -67,17 +67,81 @@ v0.4  -- SoC Integration
     └── Two compilers, not two sims      gcc/clang, as C99 and as C++17
 
 v0.5  -- Reference Observers
-├── Sequential column iterator
-├── Deterministic permutation observer
-├── Observer API
-└── Example integrations
+│   Reference Observers demonstrate ways to consume the BCMC representation.
+│   They are not part of the BCMC definition and may be replaced or extended
+│   without affecting the mathematical or hardware contracts of the primitive.
+├── v0.5a  what an observer is                         [ done ]
+│   ├── The observer contract            docs/Observers.md
+│   ├── Python reference observers       validation/observers.py
+│   └── Conformance suite                validation/test_observers.py
+├── v0.5b  the observer API                            [ done ]
+│   ├── Traversal over the driver        sw/bcmc_observer.{h,c}
+│   ├── Sequential column iterator       the identity traversal
+│   ├── Deterministic permutation        a seeded bijection of 0 .. N-1
+│   └── Observers against the RTL        sim/bcmc_observer_test.cpp
+└── v0.5c  example integrations                        [ done ]
+    │   Application × Traversal is a Cartesian product: three applications,
+    │   two reference traversals, six programs, three source files.
+    ├── The application that only looks  examples/matrix_dump/
+    ├── One tick, one column, one port   examples/gpio_scheduler/
+    ├── Balanced scheduling              examples/heater_controller/
+    ├── Traversal chosen, never written  examples/common/example_traversal.{h,c}
+    ├── The host seam, twice             sim/example_host.cpp
+    │                                    examples/common/example_host_mmio.c
+    └── Orthogonality, by diff           scripts/run_examples.sh
 
-v1.0  -- Reference Release
-├── Tang Nano 20K demo
-├── Reference FPGA implementation (includes timing closure and resource report)
-├── Documentation
-├── Example applications
-└── Stable BCMC IP release
+v0.6  -- FPGA Reference Platform
+
+    ├── Tang Nano 20K integration
+    ├── Resource utilisation report
+    ├── Timing closure
+    ├── Hardware demonstration
+    └── Programming examples
+
+v0.7  -- Formal Verification
+
+    ├── SymbiYosys property suite
+    ├── Core properties
+    ├── Cell properties
+    ├── Wishbone protocol properties
+    └── Coverage report
+
+v0.8  -- Documentation Polish
+
+    ├── Why BCMC? - Why_BCMC.md - Why would I use BCMC?
+    ├── Design rationale - Design_Rationale.md - Why is it designed this way?
+    ├── Tradeoffs.md
+    ├── Performance notes
+    ├── Integration guide
+    ├── API reference
+    └── Repository cleanup
+
+v0.9  -- Ecosystem Readiness
+
+    ├── CI improvements
+    ├── Packaging
+    ├── Release artefacts
+    ├── Issue templates
+    ├── Contribution guide
+    └── Licensing review
+
+v1.0  -- Stable BCMC IP
+
+    ├── Stable API
+    ├── Stable RTL
+    ├── Stable driver
+    ├── Stable documentation
+    ├── Reference FPGA design
+    ├── Verification complete
+    └── First public release
+
+Post-v1.0
+
+    ├── Contact host organization
+    ├── Gather feedback
+    ├── Address requested changes
+    └── Decide whether to pursue contribution
+
 ```
 
 ---
@@ -237,9 +301,88 @@ asking, so the driver does not guess -- it issues the access, lets the wrapper
 which is what stops the driver from drifting into either duplicating the
 wrapper's state machine or pretending to know the part's geometry.
 
+**An observer proves nothing new, and that is the point.** v0.5a could have been
+a pair of loops; instead it is a contract, a reference model and a conformance
+suite, because the interesting claim about a traversal is a negative one -- that
+it changes nothing. `validation/test_observers.py` therefore re-derives row
+conservation and the balance multiset from the vector files under _every_
+traversal it can build, and checks that a permuted pass is a pure reordering of
+the sequential one. Balance is a property of the matrix; smoothness is a property
+of the observer; and the second must not be bought with the first.
+
+**The shuffle has a negative control.** A Fisher-Yates loop that draws from the
+whole range instead of the prefix still returns a bijection, so every structural
+test passes and the distribution is quietly wrong. The uniformity suite runs that
+exact bug alongside the real shuffle and _requires_ it to be rejected: 5743.9
+against a threshold of 80, where the correct shuffle scores 23.3. A statistical
+test nobody has watched fail is not a test.
+
 **Two compilers instead of two simulators.** Every other component is checked by
 Verilator and Icarus reading the same vectors. A C driver cannot be: Verilog
 simulators do not compile C. The independent second opinion for v0.4d is
 therefore a second toolchain rather than a second simulator -- `sw/bcmc.c` is
 built by gcc and clang, as C99 and again as C++17, and the harness compiles the
 real file rather than a copy of it.
+
+**The permutation is a table before it is code.** `sw/bcmc_observer.c` reshuffles
+`0 .. n-1` in C, and `validation/observers.py` reshuffles it in Python, and the
+one thing the harness must never do is shuffle it a third time in C++ to decide
+who is right. `validation/gen_observer_vectors.py` therefore writes the Python
+permutations down -- 11 seeds over 40 lengths, plus the raw generator draws --
+and `sim/bcmc_observer_test.cpp` reads them before it simulates anything. This is
+the same rule as everywhere else in the project, applied to a function that has
+no mathematics in it: the expected answer comes from the model that was
+validated, never from the harness. Two implementations agreeing is worth nothing
+if the referee is a third implementation nobody checked.
+
+**A cursor is not a transaction, and the harness proves it by counting.**
+`sw/bcmc_observer.h` claims that building an order, starting a pass, peeking at
+`pi(t)` and rewinding all cost _zero_ bus accesses, and that a visit costs
+exactly what `bcmc_read_column()` costs and not one access more. Those are the
+only claims an observer can make that are worth making -- it adds no traffic --
+and they are unfalsifiable in prose, so the harness meters the bus around every
+call. The `1 + ceil(MAX_C/32)` figure for a visit is the same one v0.4d pinned
+for the primitive underneath it, unchanged by having a traversal on top.
+
+**The observer allocates nothing, by policy.** Every buffer in the API belongs to
+the caller: the order array, the bitmap the bijection check scratches in, the
+words a visit is decoded into. An observer that allocated would be the beginning
+of an allocator, and an allocator is an _application_ of BCMC rather than a part
+of it -- the moment `sw/` owns memory, the question of which traversal is the
+right one stops being the caller's. That is also why `bcmc_order_is_bijection()`
+takes a scratch bitmap and clears it itself: a caller reusing one buffer across a
+whole sweep is the expected case, and the harness hands it a dirty one to make
+sure.
+
+**An example is an application, not an observer.** v0.5c was originally planned
+as `examples/sequential_observer/` and `examples/random_observer/` -- one
+directory per traversal. That layout had the axes the wrong way round. A
+traversal is not something an example demonstrates by containing it; it is
+something an example demonstrates by _not_ containing it. So the directories are
+named for what they are for -- `matrix_dump/`, `gpio_scheduler/`,
+`heater_controller/` -- and the traversal is a command-line option in all three,
+which is what makes `Application × Traversal` visibly a product rather than a
+list. Six programs from three source files. Had the original layout been built,
+each observer would have arrived with an application welded to it, and the two
+would never have been separable again.
+
+**Orthogonality is checked with a diff, not asserted in prose.** The claim of
+v0.5c -- an observer contributes order and nothing else -- is a claim about two
+programs, and no single testbench can hold both. `scripts/run_examples.sh`
+therefore runs each application twice with only the traversal changed and
+compares the _outputs_: `--summary` must be byte-identical (P1-P4 held) and the
+running log must differ (the traversal was genuinely different). The second
+comparison is the one that matters. Two identical summaries prove nothing if
+the two traversals were secretly the same traversal, which is also why
+`ex_traversal_init()` refuses an unknown name instead of quietly falling back to
+the sequential one: a silent fallback would make every claim in the tree
+unfalsifiable by making the negative control pass for the wrong reason.
+
+**Never a second model of the peripheral.** The examples are ordinary C
+programs, which makes it tempting to give them a software stand-in for the
+hardware so they can be run anywhere. `sim/example_host.cpp` is instead a cable
+to the verilated `rtl/bcmc_wb.v` -- the same RTL the whole project has been
+checking -- because an application that passed against a fake would only
+establish that two pieces of software agree. There are exactly two hosts, and
+neither of them is a model: one drives wires in simulation, the other drives
+memory-mapped registers on a real part.
