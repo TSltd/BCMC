@@ -17,6 +17,7 @@
 #     make context  # just bcmc_context (storage and arbitration, no maths)
 #     make wb       # just bcmc_wb      (the whole tree, seen from the bus)
 #     make observer # just bcmc_observer (the traversal cursor, cycle by cycle)
+#     make observer_wb # just bcmc_obs_wb (the register window, on the bus)
 #     make soak     # the optional big files from gen_vectors.py --big
 #     make waves    # run one small file per testbench and dump waves/*.vcd
 #     make gtkwave  # ... and open the core trace
@@ -36,7 +37,8 @@ BUILDDIR := build-icarus
 # One entry per testbench: top module, its testbench file, the RTL it needs,
 # and the vector files it must pass. Adding a module means adding a stanza,
 # not editing the rules.
-TOPS       := tb_core tb_cell tb_row tb_column tb_context tb_wb tb_observer
+TOPS       := tb_core tb_cell tb_row tb_column tb_context tb_wb tb_observer \
+              tb_observer_wb_smoke
 
 # bcmc_row and bcmc_column are replication of bcmc_cell, and their testbenches
 # instantiate a SECOND, separate cell to prove it, so the cell is in both lists.
@@ -63,6 +65,11 @@ RTL_tb_wb      := $(RTLDIR)/bcmc_wb.v $(RTLDIR)/bcmc_context.v \
 # holds a cursor, and the matrix is the projection's business, not its own.
 RTL_tb_observer := $(RTLDIR)/bcmc_observer.v $(RTLDIR)/bcmc_column.v \
                    $(RTLDIR)/bcmc_cell.v
+
+# The register window is the slave, so the engine, the projection and the
+# cell all come with it; nothing above it is under test here.
+RTL_tb_observer_wb_smoke := $(RTLDIR)/bcmc_obs_wb.v $(RTLDIR)/bcmc_observer.v \
+                            $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v
 
 VEC_tb_core    := vectors/core_edge.txt \
                   vectors/core_random.txt \
@@ -99,6 +106,12 @@ VEC_tb_wb      := vectors/wb_sequences.txt \
 # gen_observer_hw_vectors.py, which runs validation/observer_hw.py.
 VEC_tb_observer := vectors/obshw_edge.txt
 
+# The smoke bench consumes no vector file: it states its own sequence. It is
+# given one existing name so that the runner per-file loop executes once,
+# which is the convention every testbench here follows -- each prints its own
+# PASS line, and a bench that ran nothing must not look like a success.
+VEC_tb_observer_wb_smoke := vectors/obshw_edge.txt
+
 # Which generator makes each testbench's vectors, so that a missing file can
 # say how to produce it rather than merely that it is absent.
 GEN_tb_core    := gen_vectors.py
@@ -119,6 +132,7 @@ SOAK_tb_column  := $(SOAK_MATRIX)
 SOAK_tb_context := $(SOAK_MATRIX)
 SOAK_tb_wb      :=
 SOAK_tb_observer :=
+SOAK_tb_observer_wb_smoke :=
 
 WAVE_tb_core    := vectors/core_edge.txt
 WAVE_tb_cell    := vectors/cell_edge.txt
@@ -127,6 +141,7 @@ WAVE_tb_column  := vectors/matrix_edge.txt
 WAVE_tb_context := vectors/matrix_edge.txt
 WAVE_tb_wb      := vectors/wb_sequences.txt
 WAVE_tb_observer := vectors/obshw_edge.txt
+WAVE_tb_observer_wb_smoke := vectors/obshw_edge.txt
 
 # tb_cell holds a whole suite in memory so that it can replay it in three
 # different orders. The array size is a compile time choice in Verilog-2005,
@@ -134,11 +149,12 @@ WAVE_tb_observer := vectors/obshw_edge.txt
 DEFS_tb_cell      :=
 SOAKDEFS_tb_cell  := -DMAXCASE=400000
 
-.PHONY: all test core cell row column context wb observer soak waves gtkwave vectors clean
+.PHONY: all test core cell row column context wb observer observer_wb \
+        soak waves gtkwave vectors clean
 
 all: test
 
-test: core cell row column context wb observer
+test: core cell row column context wb observer observer_wb
 	@echo "ICARUS: PASS"
 
 $(BUILDDIR):
@@ -223,6 +239,8 @@ context: run-tb_context
 wb: run-tb_wb
 
 observer: run-tb_observer
+
+observer_wb: run-tb_observer_wb_smoke
 
 soak: $(addprefix soak-,$(TOPS))
 
