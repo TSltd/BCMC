@@ -2,6 +2,11 @@
 
 This document is **specification**, not documentation of an implementation.
 
+**Status: sections 6 and 9 are frozen for v2.0a.** The error model and the
+sequences that must fail have been executed by `validation/observer_periph.py`
+and attacked by `validation/test_observer_periph.py`. No v2.0a change to them
+without a discovered defect or an explicit revision of this contract.
+
 `docs/Register_Map.md` is the contract that `validation/bcmc_periph.py` and
 `rtl/bcmc_wb.v` must satisfy. This file plays the same role for the observer's
 own control window, one level up:
