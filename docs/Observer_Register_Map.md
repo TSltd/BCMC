@@ -172,6 +172,12 @@ This mirrors the BCMC map's E4, which refuses a `COLUMN` read while `!VALID`: th
 hardware would not answer meaningfully, so the bus says so rather than
 acknowledging nothing.
 
+**`START` and `STEP` can never be honoured together.** Their conditions are
+mutually exclusive — `START` needs `!RUNNING` and `STEP` needs `RUNNING` — so a
+write that sets both bits is *always* refused. That is a consequence, not a rule:
+it falls out of deriving E4 from the engine's acceptance conditions instead of
+inventing an error condition of its own, and the peripheral model asserts it.
+
 **One boundary cycle, stated rather than hidden.** In the single cycle carrying
 a one-shot pass's closing visit, `RUNNING` is still 1, so a `STEP` is
 acknowledged — and the engine then ignores it, because completion has priority
@@ -282,10 +288,11 @@ R 0x000  -> 0x4F425356        OBS_ID
 R 0x008  -> geometry          OBS_CAPS
 R 0x018  -> 0x00000001        OBS_TRIG: software only
 
-W 0x00C  0x00000009           ONESHOT=1, START=1
-R 0x010  -> RUNNING=1         the first visit was pi(0)
-*        ...                  poll, or wait for DONE
-R 0x010  -> DONE=1 RUNNING=0
+W 0x00C  0x00000009           ONESHOT=1, START=1  -> visit pi(0)
+R 0x010  -> RUNNING=1
+W 0x00C  0x0000000B           ONESHOT=1, STEP=1   -> visit pi(1)
+W 0x00C  0x0000000B           ...                  one STEP per visit, N in all
+R 0x010  -> DONE=1 RUNNING=0  the Nth visit closed the pass
 W 0x010  0x00000002           clear DONE
 R 0x014  -> 1                 one pass has completed
 ```
@@ -294,6 +301,21 @@ R 0x014  -> 1                 one pass has completed
 that starts the observer before the transform completes gets a refusal rather
 than a pass that never visits. That ordering requirement is the one real
 coupling between the two windows, and it is explicit in both documents.
+
+**Two traps, both consequences of the register being a register.**
+
+The first: every `W 0x00C` writes *all* of `OBS_CTRL`, so a bare `STEP` (value
+`0x00000002`) **clears `ONESHOT`**. A one-shot pass must therefore carry its mode
+bit with every step, which is why the steps above write `0x0000000B` and not
+`0x00000002`. This is ordinary register semantics, not a rule the window invents —
+but a driver that misses it gets a pass that never ends, with no error to say so.
+(The peripheral model's doctests caught this the first time T1 was executed.)
+
+The second: **nothing advances the pass except a trigger**, and in v2.0a the only
+trigger source in the mux is software (section 4). So `T1` is `N` steps, not a
+wait, and the "poll until `DONE`" shape returns when v2.0c puts a timer or a pin
+in the mux. The register map does not change to accommodate it, because the
+engine never had a notion of a free-running pass.
 
 ### T2 — Step a continuous pass
 
