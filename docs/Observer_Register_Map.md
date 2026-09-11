@@ -98,6 +98,37 @@ and a second bus dialect would be one more thing to get wrong.
 Every bus cycle terminates in exactly one of `ack` or `err`, in the cycle after
 `stb & cyc`, and never in both and never in neither.
 
+### 3.1 The bus boundary: this window is the slave
+
+`bcmc_obs_wb.v` is itself the Wishbone B4 Classic slave, with the same port names
+and the same **region-local 12-bit byte address** as `rtl/bcmc_wb.v`:
+
+```text
+input wb_adr_i[11:0]     a byte address within this 4 KiB region
+```
+
+Two consequences, both inherited deliberately from the BCMC peripheral rather
+than decided afresh here:
+
+- **The interconnect decodes the region, and the address width is the check.**
+  "Outside the region" is not a condition this block can observe, so it is not an
+  error condition here either. Everything *inside* the region that is unmapped is
+  E1 — which is why E1 lives in this document and in the block.
+- **The one-cycle `ack`/`err` timing is implemented here**, not by an external
+  bridge, because the error model of section 6 is part of the frozen contract,
+  and a contract implemented elsewhere is a contract verified nowhere.
+
+The alternative — a bus-agnostic block taking an already-decoded local
+transaction — was considered and **not** adopted for v2.0a. Its "local
+transaction" interface is itself a specification (timing, `ack`/`err`, `sel`),
+it is covered by no frozen document, and it would move part of section 6 out of
+the verified block.
+
+The shell is still kept thin: the register file, the decode and the error logic
+are written from this document and are not welded to Wishbone signal names, so a
+future AXI-Lite wrapper is a shell swap rather than a rewrite. That is an
+implementation convenience, not a second interface in v2.0a.
+
 ## 4. The trigger sources
 
 Section 3.5 of the architecture document specifies a **trigger source mux**
