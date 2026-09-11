@@ -154,10 +154,12 @@ v2.0  -- Hardware Observers
     ├── v2.0a  the sequential observer engine
     │   ├── Specification, frozen      docs/Hardware_Observer_Architecture.md
     │   ├── The cycle model      [done]  validation/observer_hw.py
-    │   ├── The engine and its FSM     rtl/bcmc_observer.v
-    │   ├── Observation sideband       N, C, VALID, weights_flat, offsets_flat
-    │   ├── Traversal-source seam      the identity source only
-    │   ├── Zero bus per visit         proved by metering, not asserted
+    │   ├── The engine and its FSM [done] rtl/bcmc_observer.v
+    │   ├── Observation sideband   [done] N, C, VALID, weights_flat, offsets_flat
+    │   ├── Traversal-source seam  [done] the identity source only
+    │   ├── Zero bus per visit     [done] proved by metering, not asserted
+    │   ├── Verilator harness      [done] sim/bcmc_observer_hw_test.cpp
+    │   ├── Icarus testbench       [done] sim/tb_observer.v
     │   └── O1/O2/P1-P4 in hardware
     ├── v2.0b  the output engine
     │   ├── column_bits -> pins        rtl/bcmc_out_engine.v
