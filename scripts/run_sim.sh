@@ -135,6 +135,7 @@ step "6/12  the hardware observer engine satisfies its specification"
 # docs/Observer_Register_Map.md -- which is what turns that document from a
 # description into a specification, as it did for the two before it.
 ( cd validation && python3 observer_periph.py ) || die "validation/observer_periph.py"
+( cd validation && python3 test_observer_periph.py ) || die "validation/test_observer_periph.py"
 
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
