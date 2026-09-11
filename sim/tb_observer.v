@@ -104,6 +104,7 @@ module tb_observer;
     integer got;
     integer fields;
     integer k;
+    integer n_lines;
 
     // One cycle of one run: drive the recorded inputs, compare every output,
     // then take the rising edge that consumes them.
@@ -205,6 +206,7 @@ module tb_observer;
         n_runs   = 0;
         n_cycles = 0;
         errors   = 0;
+        n_lines  = 0;
 
         // The file is read a line at a time. Comments and separators carry no
         // numbers and are skipped; an H line begins a run.
@@ -213,12 +215,15 @@ module tb_observer;
                 got = $fgets(line, fd);
                 if (got <= 0) begin
                     disable read_loop;
-                end else if (line[8*256-1 -: 8] == "H") begin
+                end else begin
+                    n_lines = n_lines + 1;
+                    // Identify a header by parsing it, not by inspecting a byte
+                    // of the packed string: how a simulator justifies the result
+                    // of $fgets is not something to build a parser on. A C line,
+                    // a comment and a separator all fail to match the literal H
+                    // and yield no fields; a malformed H line yields some.
                     fields = $sscanf(line, "H %d %d %d", hN, honeshot, hcycles);
-                    if (fields != 3) begin
-                        $display("FAIL tb_observer: malformed H line");
-                        errors = errors + 1;
-                    end else begin
+                    if (fields == 3) begin
                         // Reset the engine, then replay this run's cycle lines.
                         rst = 1'b1;
                         clk = 1'b1; #1; clk = 1'b0; #1;
@@ -231,6 +236,9 @@ module tb_observer;
                         for (k = 0; k < hcycles; k = k + 1)
                             do_cycle(n_runs);
                         n_runs = n_runs + 1;
+                    end else if (fields > 0 && fields < 3) begin
+                        $display("FAIL tb_observer: malformed H line in %0s", vecfile);
+                        errors = errors + 1;
                     end
                 end
             end
@@ -239,7 +247,8 @@ module tb_observer;
         $fclose(fd);
 
         if (n_runs == 0) begin
-            $display("FAIL tb_observer: no runs found in %0s", vecfile);
+            $display("FAIL tb_observer: no runs found in %0s (%0d lines read)",
+                     vecfile, n_lines);
             errors = errors + 1;
         end
 
