@@ -206,6 +206,9 @@ optionally a second C compiler, Icarus Verilog and gtkwave.
 | `docs/Register_Map.md`                | Programmer's model: the software-facing contract                |
 | `docs/Transaction_Sequences.md`       | Canonical bus transactions, in order                            |
 | `docs/Observers.md`                   | The observer contract: what traversal may do                    |
+| `docs/Hardware_Observer.md`           | The hardware observer: architecture outline                     |
+| `docs/Hardware_Observer_Architecture.md` | v2.0a: the engine's specification and cycle contract         |
+| `docs/Observer_Register_Map.md`       | The observer's own register window                              |
 | `examples/README.md`                  | `Application × Traversal`, and why it is a product              |
 | `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications                  |
 | `docs/Why_BCMC.md`                    | Why would I use BCMC?                                           |
@@ -453,7 +456,8 @@ and `docs/Hardware_Observer_Architecture.md` for the v2.0a specification.
 
 - **v2.0a — Sequential observer engine.** The engine and its state machine, the
   observation sideband (`N`, `C`, `VALID`, the flat windows), the traversal-source
-  seam, and a pass whose every visit costs zero bus accesses.
+  seam, and a pass whose every visit costs zero bus accesses. The engine's own
+  register window is specified in `docs/Observer_Register_Map.md`.
 - **v2.0b — The output engine.** `column_bits` turned into pins: a pure consumer
   with no traversal and no mathematics.
 - **v2.0c — Traversal sources.** The seam filled: the identity source, a

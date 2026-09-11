@@ -934,42 +934,39 @@ wrong to do:
 
 ### 6.3 The observer's register window
 
-The observer needs a small control surface — `START`, `STEP`, `ONESHOT`, and a
-status it can be polled through — and that surface lives in its **own** address
-window, never in the BCMC map. Following the v0.4a discipline, the window is a
-specification written before its decode, in a new file:
+The observer needs a small control surface, and that surface lives in its **own**
+address window, never in the BCMC map. Following the v0.4a discipline, the window
+is a specification written before its decode — and it has now been written:
 
 ```text
-docs/Observer_Register_Map.md  ->  validation/observer_periph.py  ->  (decode, v2.0a)
+docs/Observer_Register_Map.md  ->  validation/observer_periph.py  ->  rtl/bcmc_obs_wb.v
 ```
 
-A sketch of the window, offered here so the shape is concrete rather than
-deferred (the full document is a v2.0a deliverable):
+That document resolves what this section left open. Two of its answers differ
+from the sketch that stood here, and both differences are the discipline working:
 
-| Offset | Name | Access | Width | Meaning |
-| --- | --- | --- | --- | --- |
-| `0x000` | `OBS_ID` | RO | 32 | `0x4F425356`, the ASCII bytes `OBSV` |
-| `0x004` | `OBS_VERSION` | RO | 32 | major, minor, patch |
-| `0x008` | `OBS_CAPS` | RO | 32 | `MAX_C`, `VAL_W`, `IDX_W` of the observer |
-| `0x00C` | `OBS_CTRL` | RW | 32 | `START` (W1S), `STEP` (W1S, the software trigger source), `ONESHOT`, `EN` |
-| `0x010` | `OBS_STATUS` | RW | 32 | `RUNNING`, `DONE` (sticky), `ABORTED` (sticky), later `SEED_READY` |
-| `0x014` | `OBS_PASS` | RO | 32 | completed-pass counter |
-| `0x018`+ | reserved | — | — | mode/seed from v2.0c |
+| Resolved | How |
+| --- | --- |
+| Geometry | `OBS_CAPS`, the same encoding as the BCMC map's `CAPS`, so one parser reads both |
+| Trigger sources | **software only** in v2.0a, reported in `OBS_TRIG` so a driver discovers the set rather than assuming it |
+| `STEP` | **exposed**, as the software trigger *source* of 3.5; the mux keeps its other inputs for v2.0c |
+| `EN` | **not added** — the engine has no enable, and gating a trigger inside the window would make the window and the engine disagree about when a visit happens |
+| `RESET` | **added** — without it a continuous pass has no stop, since `START` is refused while `RUNNING` and invalidation destroys the matrix |
+| a readable `column` | **not added** — it would invite a second, polled traversal path underneath the hardware one |
 
-Three properties of this window matter to the architecture, not just its layout:
+Three properties of the window matter to the architecture, not just its layout:
 
 - **It is a separate slave, not a second decode range in `bcmc_wb.v`.** Keeping
   the two maps in two modules is what makes "the BCMC map has no traversal in it"
   a structural fact rather than a review note.
-- **`START` and `ONESHOT` drive the engine's `start` and `oneshot`; `STEP` is the
-  v2.0a *software trigger source*, not the engine's `trigger` port** (sections 3.4
-  and 3.5). The pulse `STEP` produces is fed to the trigger-source mux, and the
-  mux's output is `trigger`. The window is a thin skin over the engine's ports and
-  their sources; it holds no traversal state of its own, and `STEP == trigger` is
-  a v2.0a configuration fact rather than an architectural identity.
-- **`ABORTED` is sticky and cleared by `START`**, mirroring `IRQ`'s
-  acknowledge-by-action lifetime (section 3.10). A driver can tell a completed
-  pass from an aborted one, which it could not if the abort were silent.
+- **No register redefines the state machine.** Where the register map says what a
+  bit does, it names the section 3.11 row the bit reaches and does not restate it.
+  A window that spelled out its own transition table would be a second
+  specification of one FSM, and the two would drift — the same objection this
+  project makes to a second implementation of the characteristic function.
+- **The window introduces no new traversal semantics.** That is why the engine
+  could be frozen and verified before the window was written, and why nothing in
+  sections 3 to 6 changed in order to write it.
 
 ### 6.4 The existing transaction sequences are unchanged — worked example
 
@@ -1161,6 +1158,31 @@ Both are lint-clean under `verilator --lint-only -Wall` and `iverilog -g2005
 -Wall`, and both are wired into `sim/Makefile` and ctest so the stage is green
 only when everything above passes. No FPGA build is required for any of it; the
 deferral of the board costs the observer nothing (v0.6 in `dev/ROADMAP.md`).
+
+---
+
+### 7.8 The O1/O2/P1–P4 conformance boundary
+
+Not every clause the observer contract states is a property of *this engine*, and
+manufacturing an RTL assertion so that each clause has one would be a mistake.
+The boundary is drawn explicitly here, so that it is a decision rather than an
+omission:
+
+| Clause | v2.0a treatment |
+| --- | --- |
+| **O1** — `pi` is a bijection | **engine property.** Corpus plus cycle model, and a named check: over one pass the emitted columns are a permutation of `0..N-1`. |
+| **O2** — a visit yields exactly `R(j)` | **not the engine's.** The engine produces a *column*; the rows are the projection's. Checked by `observer_hw_projection` against the `R` lines, and owned by `bcmc_column_test.cpp`. |
+| **O3** — determinism | **engine property, restated.** In hardware it is invariance to the *trigger schedule*: the same `N` under a jittered trigger yields the same column sequence. Checked in the harness. |
+| **P1** — coverage | **derived from O1**, plus the corpus: `W = sum(weights)` events per pass. |
+| **P2** — row conservation | **not the engine's.** A property of `M`, re-derived in `test_observer_hw.py` from the vector files. |
+| **P3** — balance multiset | **not the engine's.** The Balance Theorem's, checked in the golden/reference layer. |
+| **P4** — observer equivalence | **not in v2.0a at all.** It needs a second traversal to exist before it can be stated, so it belongs with v2.0c — and forcing it into v2.0a RTL would be manufacturing an assertion for a claim with nothing to compare against. |
+
+The line is between **properties of the engine** (O1, O3, and the conservation
+invariant of 7.4) and **properties that need the complete observer contract or the
+matrix itself** (O2, P1–P3, and P4). The engine asserts the first; the second are
+checked where the objects they are about actually live, and are not restated in
+RTL merely because the verification infrastructure could watch them.
 
 ---
 

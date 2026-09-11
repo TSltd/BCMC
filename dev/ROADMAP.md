@@ -160,7 +160,10 @@ v2.0  -- Hardware Observers
     │   ├── Zero bus per visit     [done] proved by metering, not asserted
     │   ├── Verilator harness      [done] sim/bcmc_observer_hw_test.cpp
     │   ├── Icarus testbench       [done] sim/tb_observer.v
-    │   └── O1/O2/P1-P4 in hardware
+    │   ├── Register window, spec  [done] docs/Observer_Register_Map.md
+    │   ├── O/P conformance line   [done] section 7.8: engine vs contract
+    │   ├── Register window, model       validation/observer_periph.py
+    │   └── Register window, decode      rtl/bcmc_obs_wb.v
     ├── v2.0b  the output engine
     │   ├── column_bits -> pins        rtl/bcmc_out_engine.v
     │   └── A pure consumer            no traversal, no mathematics
