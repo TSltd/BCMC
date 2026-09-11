@@ -54,6 +54,13 @@ traversal that could "only" be built in hardware would be the wrong first
 traversal; the identity source is the control case again, exactly as it is in
 `sw/bcmc_observer.c`, and it is what every later source is diffed against.
 
+**Status: v2.0a is frozen.** Sections 3 to 6 are behaviourally complete — every
+combination of inputs on an edge has a stated result (3.11), the timing is one
+clock (5.1), and the seams are pinned (3.3, 4). What remains (section 11) is
+*configuration*, not behaviour. The next artefact is `validation/observer_hw.py`,
+the cycle-level model derived from this document; `rtl/bcmc_observer.v` is written
+only once that model is green.
+
 ---
 
 ## 1. Architecture
@@ -255,7 +262,7 @@ sequential content of v2.0a.
               rst
                │
                ▼
-          +---------+    start & valid        +------------------------+
+          +---------+ start & valid & N>=1    +------------------------+
           |  IDLE   |────────────────────────>|          RUN           |
           | no pass |  t <- 0                 |  t counts 0 .. N-1     |
           +---------+  present pi(0)          |  a pass is in progress |
@@ -322,8 +329,15 @@ whole engine. Its presence here is the architectural decision that v2.0c is a
 
 ### 3.4 `start`
 
-`start` is a one-cycle pulse. It is **accepted** only in `IDLE` with `valid = 1`;
-otherwise it is ignored (see 3.9). On the clock edge after an accepted `start`:
+`start` is a one-cycle pulse, and its acceptance condition is a single
+conjunction:
+
+```text
+start accepted  <=>  state_q == IDLE  &  valid  &  (N >= 1)
+```
+
+Otherwise it is ignored (see 3.9 and the event table in 3.11). On the clock edge
+after an accepted `start`:
 
 ```text
 state_q <- RUN        t_q <- 0        col_q <- pi(0) = 0
@@ -334,13 +348,24 @@ so the first visit is presented in the **cycle after** `start`, and `running`
 rises with it. `start` also clears the sticky `aborted` flag: a restart is the
 acknowledgement of an abort.
 
-`N = 0` is not an instance (the theorem's precondition is `N >= 1`), but the
-engine still refuses rather than wrapping: an accepted `start` with `N = 0`
-leaves `visit_q = 0` and stays in `RUN` with no visits, exactly as `C = 0` leaves
-an empty matrix that visits nothing. This is a guard against a precondition
-violation, not a case the contract defines.
+**`N = 0` does not start a pass.** `N >= 1` is a precondition of the theorem, not
+a legal empty instance: `docs/Transaction_Sequences.md` draws exactly that line
+when it says "`C = 0` is the empty instance; `N = 0` is not an instance at all."
+So `N = 0` is outside the observer's **input domain**, and the engine refuses the
+`start` rather than entering `RUN` with nothing to visit. There is consequently no
+"running but empty" state to escape from: the engine can only ever be `IDLE`, or
+in a `RUN` with a well-defined `0 <= t_q < N`. A `start` with `N = 0` leaves the
+engine in `IDLE` and changes nothing.
 
-### 3.5 `trigger` (and `step`)
+This is the one place where the observer deliberately differs from the wrapper's
+handling of `C = 0`. `C = 0` *is* an instance — an empty matrix, legal and
+visitable, whose every column is empty — so a pass over it is well defined and
+runs `N` visits that emit nothing. `N = 0` is not an instance at all, so there is
+no pass to define; admitting it would create a `RUN` that emits no visits
+forever, which is a dead state reachable from `IDLE` and escapable only by reset.
+Refusing it at the door is simpler than reasoning about that state.
+
+### 3.5 `trigger`, and the trigger sources
 
 `trigger` is a one-cycle pulse and is the *only* thing that paces a pass. It is
 accepted only in `RUN` with `valid = 1`. On the edge after an accepted `trigger`:
@@ -351,24 +376,56 @@ col_q  <- pi(t_q_new)       visit_q <- 1
 done_q <- (t_q_new == N - 1)
 ```
 
-Exactly one `trigger` produces exactly one visit, at every point in the pass and
-across every pass boundary — there is no cycle in which a trigger produces two
-visits or none (other than the refusals of 3.9). `trigger` is the wire a software
-`STEP` write, a timer, or a zero-cross detector drives; the engine cannot tell
-them apart, and must not be able to.
+Exactly one accepted `trigger` produces exactly one visit, at every point in the
+pass and across every pass boundary — there is no cycle in which a trigger
+produces two visits or none (other than the refusals of 3.9 and 3.11).
 
-The name `step` in the outline and `trigger` here are the same signal seen from
-two sides: `step` is what a *caller* asks for, `trigger` is what the *engine*
-receives. The register window (6.3) exposes it as `STEP`, because that is the
-word a driver uses.
+**`trigger` is an input to the engine, not a register in it.** The engine does not
+know, and must not be able to tell, where the pulse came from. What *originates*
+the pulse is a separate concern, and v2.0a makes it an explicit one even though it
+implements only a single source of it:
+
+```text
+                        +----------------------------+
+   software STEP ------>|                            |
+   timer         ------>|     trigger source mux      |-----> trigger ---> engine
+   zero-cross    ------>|                            |
+   external pin  ------>|                            |
+                        +----------------------------+
+```
+
+v2.0a instantiates the **software** source and nothing else: `OBS_CTRL.STEP` is a
+W1S bit whose pulse is fed to the mux, and the mux's output is the engine's
+`trigger`. So `STEP == trigger` is a property of the v2.0a *configuration*, not of
+the architecture. Adding a timer, a zero-cross detector or an external pin changes
+the mux, not the engine, and not the meaning of the wire — which is what keeps a
+pass's column sequence independent of which source paced it (O3, section 7.4).
+
+Which sources v2.0a advertises is one of the open questions (section 11). The mux
+is specified here, ahead of that answer, so that answering it is a configuration
+choice rather than a rewrite. The name `step` in the outline and `trigger` here
+are the same signal seen from two sides: `step` is what a *caller* asks for,
+`trigger` is what the *engine* receives.
 
 ### 3.6 `column`
 
-`column` is `col_q`, a registered `VAL_W`-bit output, and it always satisfies
-`0 <= column < N` — by construction, because `t_q` does and `pi` is a bijection.
-It is stable for the whole cycle in which `visit_valid` is high, and it is `0` in
-`IDLE`. It needs no valid bit of its own: `column` is meaningful exactly when
-`visit_valid` is, which is the same rule the Core's `offset_out` follows.
+`column` is `col_q`, a registered `VAL_W`-bit output. It is **guaranteed valid
+for every cycle in which `visit_valid` is asserted**, and in those cycles it
+satisfies `0 <= column < N` by construction, because `t_q` does and `pi` is a
+bijection. Outside a visit, `column` **retains its last value**: it is not cleared
+between visits and not cleared at a pass boundary (5.3). That retained value
+carries no traversal-event significance — the only cycles in which `column` means
+"this is the column being visited *now*" are the cycles in which `visit_valid` is
+high. After a reset, `column` is `0` in `IDLE`.
+
+It is worth stating it this way round because the shorter phrasing — "`column` is
+meaningful exactly when `visit_valid` is" — appears to contradict 5.3, which
+deliberately *keeps* the last column after `done` so that a consumer such as a
+GPIO bank has no end-of-pass case to handle. The precise form is: **valid during
+a visit; retained and insignificant otherwise.**
+
+`column` needs no valid bit of its own, which is the same rule the Core's
+`offset_out` follows: a value is meaningful when its accompanying strobe says so.
 
 ### 3.7 `visit_valid`
 
@@ -387,6 +444,29 @@ does not happen. It is the hardware form of E4 — the peripheral refuses to ans
 a `COLUMN` read when `!VALID`, and the observer refuses to *present* a visit for
 the same reason and by the same rule. It is checkable by a one-line assertion
 (`assert (!(visit_valid && !valid))`) rather than by reasoning about the FSM.
+
+**A visit is a *scheduled* visit.** `visit_q` means "a visit is due this cycle";
+the output `visit_valid` means "and it is being presented". The two differ
+exactly when `valid` is low, and keeping them as separate names is what makes the
+next point sail rather than snag.
+
+**Two mechanisms, kept orthogonal.** Which half of the invalidation story is
+combinational and which half is synchronous is easy to conflate, and an RTL
+implementation that conflates them gets one of the two wrong:
+
+| Mechanism | Kind | Does | Where |
+| --- | --- | --- | --- |
+| **suppression** | combinational | `visit_valid` cannot be high while `!valid` | this section; the output gate |
+| **abort** | synchronous | a scheduled visit is discarded and the pass ends, on the next rising edge | 3.10; the FSM |
+
+The combinational half is the *safety* property: no stale bit is ever presented.
+The synchronous half is the *state* property: the engine leaves `RUN` and records
+why. Neither substitutes for the other. Gating alone would leave the engine in
+`RUN` forever and, under `oneshot = 0`, would silently resume the aborted pass the
+moment `valid` returned — a pass spanning two matrices, the failure F3 names. The
+FSM alone would emit one more visit in the cycle `valid` falls, because an FSM
+tests `valid` at an edge and the edge has already happened. Both are required, and
+both are separately testable.
 
 ### 3.8 `done` and pass boundaries
 
@@ -452,18 +532,30 @@ old matrix would be answering a question about a matrix that no longer exists."
 The observer has no bus, so it has no `err` to return. It has the analogous
 obligation, and it discharges it the same way, structurally:
 
-1. **No visit is ever presented while `!valid`** — `visit_valid = visit_q & valid`
-   (3.7). Not one cycle of stale matrix bits reaches the output engine.
-2. **A pass in flight is aborted**, because a pass is a traversal of *one*
-   matrix. If the weights change halfway through, the remaining visits would be
-   visits to a different `M`, and the pass would no longer be a pass: O1 would
-   hold syntactically (still `N` visits) and fail semantically (not the same
-   matrix). So on the edge where `valid` is low in `RUN`:
+1. **No visit is ever presented while `!valid`** (combinational, 3.7):
+
+   ```verilog
+   assign visit_valid = visit_q & valid;
+   assign done        = visit_q & valid & (t_q == N - 1);
+   ```
+
+   Not one cycle of stale matrix bits reaches the output engine, and the guarantee
+   holds in the very cycle `valid` falls, not one cycle later.
+2. **A pass in flight is aborted** (synchronous, on the next rising edge), because
+   a pass is a traversal of *one* matrix. If the weights change halfway through,
+   the remaining visits would be visits to a different `M`, and the pass would no
+   longer be a pass: O1 would hold syntactically (still `N` visits) and fail
+   semantically (not the same matrix). So on the rising edge at which `RUN` and
+   `!valid` are both true:
 
    ```text
    state_q <- IDLE    visit_q <- 0    done_q <- 0    running <- 0
    aborted_q <- 1     (unless the pass had already completed)
    ```
+
+   The two rules are orthogonal by construction (3.7): the `if` decides the state,
+   the `assign` decides what the wires show. A scheduled visit that is suppressed
+   by (1) is the same event that (2) ends the pass on the following edge.
 
 3. **The abort is reported, not silent.** `aborted` is sticky and cleared only by
    a new `start`. It is the observer's `err`: the software-side analogue is the
@@ -480,6 +572,44 @@ refused access leaves no trace and does not queue.
 A pass may therefore have one of three endings — `done` (completed), `aborted`
 (cut short), or neither (still in flight) — and `OBS_STATUS` distinguishes all
 three. Nothing else resumes a pass; only `start` does, after `VALID` has returned.
+
+### 3.11 Simultaneous events
+
+The engine is small enough that every combination of its inputs on one edge can
+be enumerated, so it is enumerated. The table below is the complete decision
+rule; where an implementation and this table disagree, the table is right.
+
+| Condition on the edge | Result |
+| --- | --- |
+| `start` & `IDLE` & `valid` & `N >= 1` | **accepted**: enter `RUN`, `t_q <- 0`, visit `pi(0)` |
+| `start` & (`!IDLE` or `!valid` or `N == 0`) | ignored; no state change |
+| `trigger` & `RUN` & `valid` | **accepted**: advance one step, schedule one visit |
+| `trigger` & `IDLE` | ignored |
+| `trigger` & `RUN` & `!valid` | ignored; the abort of 3.10 takes precedence |
+| `!valid` & `RUN` | abort: `IDLE`, `visit_q <- 0`, `aborted_q <- 1` |
+| `!valid` & `visit_q == 1` (any state) | `visit_valid = 0` **this cycle** (combinational, 3.7); the scheduled visit is not seen |
+| `done` & `oneshot` | after that visit: `IDLE`, `running <- 0` |
+| `done` & `!oneshot` | remain `RUN`; the next accepted `trigger` wraps to `t_q = 0` |
+| `start` & `trigger` in the same cycle | **`start` wins** if `IDLE`; if `RUN`, `start` is refused and `trigger` is honoured |
+| `rst` | overrides every row above; see 3.9 |
+
+Three rows are worth a word beyond the table.
+
+**`start` and `trigger` cannot genuinely conflict.** In `IDLE` a `trigger` is
+ignored; in `RUN` a `start` is refused. So at most one of the two is ever
+*accepted* on a given edge, and the row exists only to pin the behaviour for an
+RTL author who gates them differently. `start` is given priority in `IDLE` as the
+defensive choice, so that a test can assert it.
+
+**`!valid` beats `trigger`.** A trigger in the same cycle the context dies is
+ignored, not latched (3.10, "drop, not defer"). This is what keeps the visit count
+equal to the accepted-trigger count across an invalidation, and it is the reason
+the conservation invariant in section 7.4 can be stated without an exception for
+invalidations.
+
+**`N >= 1` is part of the `start` condition, not a case inside `RUN`.** There is
+no row for `start` with `N == 0` entering a pass, because there is no such pass
+(3.4). The refusal is total, and it leaves no state behind.
 
 ---
 
@@ -812,7 +942,7 @@ deferred (the full document is a v2.0a deliverable):
 | `0x000` | `OBS_ID` | RO | 32 | `0x4F425356`, the ASCII bytes `OBSV` |
 | `0x004` | `OBS_VERSION` | RO | 32 | major, minor, patch |
 | `0x008` | `OBS_CAPS` | RO | 32 | `MAX_C`, `VAL_W`, `IDX_W` of the observer |
-| `0x00C` | `OBS_CTRL` | RW | 32 | `START` (W1S), `STEP` (W1S), `ONESHOT`, `EN` |
+| `0x00C` | `OBS_CTRL` | RW | 32 | `START` (W1S), `STEP` (W1S, the software trigger source), `ONESHOT`, `EN` |
 | `0x010` | `OBS_STATUS` | RW | 32 | `RUNNING`, `DONE` (sticky), `ABORTED` (sticky), later `SEED_READY` |
 | `0x014` | `OBS_PASS` | RO | 32 | completed-pass counter |
 | `0x018`+ | reserved | — | — | mode/seed from v2.0c |
@@ -822,9 +952,12 @@ Three properties of this window matter to the architecture, not just its layout:
 - **It is a separate slave, not a second decode range in `bcmc_wb.v`.** Keeping
   the two maps in two modules is what makes "the BCMC map has no traversal in it"
   a structural fact rather than a review note.
-- **`STEP` is the `trigger` wire, `START` is the `start` wire, `ONESHOT` is the
-  `oneshot` wire** (section 3). The window is a thin skin over the engine's
-  ports; it holds no traversal state of its own.
+- **`START` and `ONESHOT` drive the engine's `start` and `oneshot`; `STEP` is the
+  v2.0a *software trigger source*, not the engine's `trigger` port** (sections 3.4
+  and 3.5). The pulse `STEP` produces is fed to the trigger-source mux, and the
+  mux's output is `trigger`. The window is a thin skin over the engine's ports and
+  their sources; it holds no traversal state of its own, and `STEP == trigger` is
+  a v2.0a configuration fact rather than an architectural identity.
 - **`ABORTED` is sticky and cleared by `START`**, mirroring `IRQ`'s
   acknowledge-by-action lifetime (section 3.10). A driver can tell a completed
   pass from an aborted one, which it could not if the abort were silent.
@@ -961,6 +1094,7 @@ Each clause becomes a hardware check, and each is checked on assembled RTL:
 | **P2** | counting set bits per row over a pass gives `weights[i]`, for every `i` |
 | **P3** | the multiset of `popcount(column_bits)` over a pass equals `r` copies of `q+1` and `N-r` copies of `q` (the Balance Theorem, re-derived from the RTL output, not assumed) |
 | **P4** | deferred to v2.0c, where a second traversal exists to compare against; the machinery is the `--summary` diff of `scripts/run_examples.sh`, pointed at hardware |
+| **conservation** | for any trigger pattern, the number of emitted visits equals the number of *accepted* triggers plus one per accepted `start` — never a duplicate, never an extra, never a missing one |
 
 **O3 deserves the emphasis it is given here**, because it is the one clause a
 hardware observer could break and a software observer could not. The software
@@ -971,6 +1105,17 @@ schedule" — that would be trivially true and would prove nothing — but "the
 `column` sequence is independent of the schedule". A testbench that jitters the
 trigger and diffs only the sequence of visited columns is what makes O3 mean
 something in hardware.
+
+**The conservation invariant is the companion to O3**, and it is stated as a
+*count* because a count is what catches the errors a sequence diff can miss when
+the wrong answer happens to look plausible. Under any trigger pattern — sparse,
+burst, or back-to-back — the number of visits must equal the number of triggered
+advances. That single equality subsumes the individual failure modes the mutation
+battery (7.6) plants one at a time: a double advancement, an accidental auto-wrap
+(the boundary producing two visits), a trigger honoured in `IDLE`, a trigger
+honoured during an invalidation, and an off-by-one at `N - 1` each break it. It is
+expressed over *accepted* triggers rather than *asserted* ones precisely because
+section 3.11 makes refusal a stated, countable event rather than a silent drop.
 
 ### 7.5 Cost claims are metered, not asserted
 
@@ -990,9 +1135,10 @@ engine: the pass-boundary comparison written `!=` instead of `<` (fails at
 `N = 1`); `done` emitted one cycle late; `visit_valid` not gated by `valid`; a
 pass that resumes instead of aborting on `!valid`; `column` cleared at the pass
 boundary; a trigger accepted in `IDLE`; the wrap presenting `pi(0)` without a
-trigger; reset releasing in `RUN`; and a cursor that wraps at `N-1` instead of
-`N`. Every one of these is a bug a careful implementer could write, and every one
-must be caught by a *named* test.
+trigger; reset releasing in `RUN`; a cursor that wraps at `N-1` instead of `N`;
+a `start` with `N = 0` entering `RUN`; and `trigger` winning over `start` when both
+are asserted in `IDLE`. Every one of these is a bug a careful implementer could
+write, and every one must be caught by a *named* test.
 
 ### 7.7 Two simulators, and lint
 
@@ -1259,6 +1405,11 @@ and section 7.5 meters both.
 6. **`N` is not added to the Context** (4.5, F1).
 7. The streaming reference traversal for v2.0c is **affine**; Fisher–Yates is a
    **buffered** source with an explicit fill bound (9.3).
+8. The **trigger-source mux** is an explicit architectural element even though
+   v2.0a instantiates only the software source: `STEP` is that source's pulse, not
+   the engine's `trigger` port (3.5, 6.3).
+9. `N = 0` does **not** start a pass: `start` requires `N >= 1`, so the engine has
+   no "running but empty" state (3.4, 3.11).
 
 ### Remaining, and who decides
 
@@ -1274,6 +1425,22 @@ and section 7.5 meters both.
 The last row is already acted on: `dev/ROADMAP.md` and `README.md` record Tang
 Nano as deferred and place v2.0a–d as an independent stream, which is the
 assumption this document makes.
+
+### v2.0a is frozen
+
+With the event table of 3.11 added, the `N = 0` dead state removed (3.4), the
+synchronous/combinational split made orthogonal (3.7, 3.10), and `STEP`
+re-framed as a trigger *source* rather than the trigger itself (3.5), nothing in
+sections 3–6 is open at the level of behaviour. Every remaining item in the table
+above chooses a geometry, an address range or a trigger set; none of them changes
+the state machine, the one-clock timing, or the contracts at the seams.
+
+The next artefact is therefore `validation/observer_hw.py` — the cycle-level model
+derived directly from this document — together with a test that drives it with the
+edge cases enumerated in 3.11. Its job is to *falsify this specification* before
+any RTL exists, in the same way `validation/bcmc_periph.py` was used to falsify
+`docs/Transaction_Sequences.md`. `rtl/bcmc_observer.v` is written only after that
+model is green, and it is written to satisfy the model, never to replace it.
 
 ---
 

@@ -152,6 +152,8 @@ v2.0  -- Hardware Observers
     docs/Hardware_Observer_Architecture.md.
 
     ├── v2.0a  the sequential observer engine
+    │   ├── Specification, frozen      docs/Hardware_Observer_Architecture.md
+    │   ├── The cycle model            validation/observer_hw.py
     │   ├── The engine and its FSM     rtl/bcmc_observer.v
     │   ├── Observation sideband       N, C, VALID, weights_flat, offsets_flat
     │   ├── Traversal-source seam      the identity source only
