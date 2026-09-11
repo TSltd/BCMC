@@ -190,6 +190,39 @@ verilate(bcmc_context_test
   VERILATOR_ARGS -Wall -GVAL_W=${BCMC_VAL_W} -GIDX_W=${BCMC_VAL_W})
 
 #---------------------------------------------------------------------------
+# bcmc_observer: the sequential observer engine, every cycle
+#
+# The observer contains its own bcmc_column instance, so the projection and the
+# cell come with it -- the same shape as bcmc_wb, one level down, and a
+# deliberate second *instance* of a verified module rather than a second
+# implementation of the characteristic function (section 4.4).
+#
+# One top is verilated. There is nothing inside the fabric to compare it
+# against, and that is the point: the comparison is with
+# validation/observer_hw.py, and it arrives as recorded cycles -- every cycle,
+# not only the emitted visits.
+#
+# The geometry is the shared one, passed to Verilator and to the harness alike
+# so that the two cannot drift.
+#---------------------------------------------------------------------------
+
+add_executable(bcmc_observer_hw_test bcmc_observer_hw_test.cpp)
+target_link_libraries(bcmc_observer_hw_test PRIVATE bcmc_sim_common)
+target_compile_definitions(bcmc_observer_hw_test PRIVATE
+  BCMC_OBS_MAX_C=${BCMC_MAX_C}
+  BCMC_OBS_VAL_W=${BCMC_VAL_W})
+
+verilate(bcmc_observer_hw_test
+  SOURCES ${BCMC_RTL}/bcmc_observer.v
+          ${BCMC_RTL}/bcmc_column.v
+          ${BCMC_RTL}/bcmc_cell.v
+  TOP_MODULE bcmc_observer
+  PREFIX Vbcmc_observer
+  TRACE
+  VERILATOR_ARGS -Wall -GVAL_W=${BCMC_VAL_W} -GIDX_W=${BCMC_VAL_W}
+                 -GMAX_C=${BCMC_MAX_C})
+
+#---------------------------------------------------------------------------
 # bcmc_wb: the register map, on real wires
 #
 # The whole design is under test here, because the wrapper instantiates it:
@@ -517,6 +550,22 @@ add_test(NAME column_trace
          COMMAND bcmc_column_test --limit 8
                  --vcd ${BCMC_WAVES}/bcmc_column.vcd
                  ${BCMC_VECTORS}/matrix_edge.txt)
+
+# The observer engine, every cycle against validation/observer_hw.py, and the
+# wiring of its internal projection against the reference matrices. Two tests
+# rather than one because they are two different claims: the engine's timing
+# and state (an obshw file) and the projection's connection (a matrix file).
+add_test(NAME observer_hw_edge
+         COMMAND bcmc_observer_hw_test ${BCMC_VECTORS}/obshw_edge.txt)
+
+add_test(NAME observer_hw_projection
+         COMMAND bcmc_observer_hw_test ${BCMC_VECTORS}/matrix_edge.txt
+                 ${BCMC_VECTORS}/matrix_random.txt)
+
+add_test(NAME observer_hw_trace
+         COMMAND bcmc_observer_hw_test --limit 6
+                 --vcd ${BCMC_WAVES}/bcmc_observer_hw.vcd
+                 ${BCMC_VECTORS}/obshw_edge.txt)
 
 add_test(NAME context_trace
          COMMAND bcmc_context_test --limit 4

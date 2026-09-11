@@ -126,6 +126,11 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 observer_hw.py )      || die "validation/observer_hw.py"
 ( cd validation && python3 test_observer_hw.py ) || die "validation/test_observer_hw.py"
 
+# The cycle-by-cycle runs the RTL harnesses replay. Regenerated here for the
+# same reason gen_vectors.py is: the expected values must come from the model
+# that was checked, never from a vector file of uncertain age.
+( cd validation && python3 gen_observer_hw_vectors.py ) || die "gen_observer_hw_vectors.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
