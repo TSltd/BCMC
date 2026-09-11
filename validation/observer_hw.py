@@ -57,7 +57,7 @@ __all__ = [
     "identity_source",
     "visit_columns",
     "bank_fill_cycles",
-    "bank_lead_passes",
+    "bank_fill_passes",
 ]
 
 IDLE = "IDLE"
@@ -408,21 +408,36 @@ def bank_fill_cycles(N, seed):
     return cycles
 
 
-def bank_lead_passes(N, seed, clocks_per_visit=1):
+def bank_fill_passes(N, seed, clocks_per_visit=1):
     """
-    Passes of lead a double-buffered shuffled source needs (section 9.3).
+    The bank fill expressed in whole **pass intervals**, not in lead.
 
-    `clocks_per_visit` is the trigger period in clocks. The source is legal
-    exactly when `bank_fill_cycles(N, seed) <= N * clocks_per_visit`; when it is
-    not, this is the number of passes the generator must run ahead:
+    `clocks_per_visit` is the trigger period in clocks, so one pass occupies
+    `N * clocks_per_visit` clocks. This returns the smallest number of pass
+    intervals that covers the fill:
 
-        >>> bank_lead_passes(64, 1) >= 1
+        >>> bank_fill_passes(64, 1) >= 1
         True
+
+    It is a **duration**, and the name says so deliberately. The earlier name
+    here was `bank_lead_passes`, which was wrong: how much *lead* a double
+    buffer needs is not a property of the fill at all. It depends on when
+    generation starts (at the swap, or after it?), whether the generator may
+    write the inactive bank while a pass is in flight, and whether a pass may
+    begin without a bank ready. Those are scheduling decisions belonging to the
+    v2.0c specification. What this function can honestly report is how many pass
+    intervals of generation the fill *spans*; converting that into a required
+    lead is a separate argument, and making that argument is the point of
+    section 9.3 rather than something to bury in a helper.
+
+    One consequence is worth stating: the source is legal at this rate exactly
+    when the fill spans at most one pass interval, i.e. when this returns 0 or
+    1.
     """
     if clocks_per_visit < 1:
         raise ValueError("clocks_per_visit must be >= 1")
     span = N * clocks_per_visit
-    return max(1, -(-bank_fill_cycles(N, seed) // span))
+    return -(-bank_fill_cycles(N, seed) // span)
 
 
 # ---------------------------------------------------------------------------

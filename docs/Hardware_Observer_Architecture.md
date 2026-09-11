@@ -1030,8 +1030,8 @@ docs/Hardware_Observer_Architecture.md
                     └── validation/reference.py   (the golden matrix: bcmc_cell/row/column)
                                 │
                                 v
-                    sim/bcmc_observer_test.cpp    (the engine vs the models)
-                    sim/tb_observer.v             (the second opinion, Icarus)
+                    sim/bcmc_observer_hw_test.cpp  (the engine vs the models, every cycle)
+                    sim/tb_observer.v              (the second opinion, Icarus)
 ```
 
 ### 7.1 The two golden models
@@ -1152,9 +1152,11 @@ write, and every one must be caught by a *named* test.
 
 ### 7.7 Two simulators, and lint
 
-As for every RTL component: a Verilator harness (`sim/bcmc_observer_test.cpp`,
-RTL == the Python model cycle by cycle) and an Icarus testbench
-(`sim/tb_observer.v`, a second opinion that shares no code with the harness).
+As for every RTL component: a Verilator harness (`sim/bcmc_observer_hw_test.cpp`,
+RTL == the Python model cycle by cycle; the name carries `_hw_` because
+`sim/bcmc_observer_test.cpp` is already the *software* observer's conformance
+test) and an Icarus testbench (`sim/tb_observer.v`, a second opinion that shares
+no code with the harness).
 Both are lint-clean under `verilator --lint-only -Wall` and `iverilog -g2005
 -Wall`, and both are wired into `sim/Makefile` and ctest so the stage is green
 only when everything above passes. No FPGA build is required for any of it; the

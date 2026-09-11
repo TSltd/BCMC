@@ -39,7 +39,7 @@ from observer_hw import (
     RUN,
     SequentialEngine,
     bank_fill_cycles,
-    bank_lead_passes,
+    bank_fill_passes,
     simulate,
     visit_columns,
 )
@@ -542,7 +542,7 @@ def suite_bank_bound():
     Ns = (8, 16, 32, 64, 128)
     seeds = list(range(40))
 
-    print(f"    {'N':>5} {'mean fill':>10} {'fill/N':>8} {'lead@1':>7} {'rate':>6}")
+    print(f"    {'N':>5} {'mean fill':>10} {'fill/N':>8} {'passes':>7} {'rate':>6}")
     for N in Ns:
         fills = [bank_fill_cycles(N, s) for s in seeds]
         if any(f < N - 1 for f in fills):
@@ -550,9 +550,9 @@ def suite_bank_bound():
         checked += 1
         mean = sum(fills) / len(fills)
         ratio = mean / N
-        lead = bank_lead_passes(N, seeds[0], 1)
+        spans = bank_fill_passes(N, seeds[0], 1)
         rate = N / mean                      # visits per clock the fill allows
-        print(f"    {N:>5} {mean:>10.1f} {ratio:>8.2f} {lead:>7} {rate:>6.2f}")
+        print(f"    {N:>5} {mean:>10.1f} {ratio:>8.2f} {spans:>7} {rate:>6.2f}")
         if ratio <= 1.0:
             fails.append(f"N={N}: mean fill ratio {ratio:.2f} <= 1; claim does not hold")
         checked += 1
@@ -567,17 +567,19 @@ def suite_bank_bound():
         fails.append(f"CONTROL: only {over}/40 seeds exceeded N; the claim is weak")
     checked += 1
 
-    # `bank_lead_passes` must agree with the legality condition it summarises.
+    # `bank_fill_passes` must agree with the legality condition it summarises:
+    # the source is legal at this rate exactly when the fill spans at most one
+    # pass interval.
     for N in (8, 16, 64):
         for r in (1, 2, 4):
             for s in range(10):
                 fill = bank_fill_cycles(N, s)
-                lead = bank_lead_passes(N, s, r)
+                spans = bank_fill_passes(N, s, r)
                 legal = fill <= N * r
-                if legal and lead != 1:
-                    fails.append(f"N={N} r={r} s={s}: legal but lead {lead}")
-                if not legal and lead != math.ceil(fill / (N * r)):
-                    fails.append(f"N={N} r={r} s={s}: lead {lead} != ceil")
+                if legal != (spans <= 1):
+                    fails.append(f"N={N} r={r} s={s}: legal != (spans <= 1)")
+                if spans != math.ceil(fill / (N * r)):
+                    fails.append(f"N={N} r={r} s={s}: spans {spans} != ceil")
                 checked += 1
 
     if fails:
@@ -601,7 +603,7 @@ def main():
     results.append(suite_bijection())
     print()
 
-    print("Conservation -- visits == accepted requests:")
+    print("Conservation -- request scheduling and suppression:")
     results.append(suite_conservation())
     print()
 
