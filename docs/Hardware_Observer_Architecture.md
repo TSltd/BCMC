@@ -57,9 +57,11 @@ traversal; the identity source is the control case again, exactly as it is in
 **Status: v2.0a is frozen.** Sections 3 to 6 are behaviourally complete — every
 combination of inputs on an edge has a stated result (3.11), the timing is one
 clock (5.1), and the seams are pinned (3.3, 4). What remains (section 11) is
-*configuration*, not behaviour. The next artefact is `validation/observer_hw.py`,
-the cycle-level model derived from this document; `rtl/bcmc_observer.v` is written
-only once that model is green.
+*configuration*, not behaviour. The next artefact was `validation/observer_hw.py`,
+the cycle-level model derived from this document. It now exists and is green, and
+it found two defects *in the document itself* — F11 and F12 in section 10 — which
+are corrected here. `rtl/bcmc_observer.v` is written only once that model is
+green, and to satisfy it.
 
 ---
 
@@ -590,6 +592,7 @@ rule; where an implementation and this table disagree, the table is right.
 | `!valid` & `visit_q == 1` (any state) | `visit_valid = 0` **this cycle** (combinational, 3.7); the scheduled visit is not seen |
 | `done` & `oneshot` | after that visit: `IDLE`, `running <- 0` |
 | `done` & `!oneshot` | remain `RUN`; the next accepted `trigger` wraps to `t_q = 0` |
+| `done` & `oneshot` & `trigger` | completion wins: the pass ends in `IDLE`; the `trigger` is ignored |
 | `start` & `trigger` in the same cycle | **`start` wins** if `IDLE`; if `RUN`, `start` is refused and `trigger` is honoured |
 | `rst` | overrides every row above; see 3.9 |
 
@@ -602,10 +605,16 @@ RTL author who gates them differently. `start` is given priority in `IDLE` as th
 defensive choice, so that a test can assert it.
 
 **`!valid` beats `trigger`.** A trigger in the same cycle the context dies is
-ignored, not latched (3.10, "drop, not defer"). This is what keeps the visit count
-equal to the accepted-trigger count across an invalidation, and it is the reason
-the conservation invariant in section 7.4 can be stated without an exception for
-invalidations.
+ignored, not latched (3.10, "drop, not defer"). It is worth being precise about
+what this does and does not buy, because the first draft of this section claimed
+too much. A trigger accepted *one cycle earlier* has already scheduled a visit,
+and if the context is invalidated before that visit is presented, the cursor has
+moved but the visit is suppressed by the output gate of 3.7. So the visit count is
+**not** preserved across an invalidation. What is true -- and what section 7.4 now
+states -- is that every accepted request schedules exactly one visit, every
+scheduled visit is either presented or suppressed, and **the suppressed count is
+at most one per invalidation**, because a request is never more than one cycle
+ahead of its visit. The cycle model found this; see section 10, F11.
 
 **`N >= 1` is part of the `start` condition, not a case inside `RUN`.** There is
 no row for `start` with `N == 0` entering a pass, because there is no such pass
@@ -1094,7 +1103,7 @@ Each clause becomes a hardware check, and each is checked on assembled RTL:
 | **P2** | counting set bits per row over a pass gives `weights[i]`, for every `i` |
 | **P3** | the multiset of `popcount(column_bits)` over a pass equals `r` copies of `q+1` and `N-r` copies of `q` (the Balance Theorem, re-derived from the RTL output, not assumed) |
 | **P4** | deferred to v2.0c, where a second traversal exists to compare against; the machinery is the `--summary` diff of `scripts/run_examples.sh`, pointed at hardware |
-| **conservation** | for any trigger pattern, the number of emitted visits equals the number of *accepted* triggers plus one per accepted `start` — never a duplicate, never an extra, never a missing one |
+| **conservation** | every accepted request (an accepted `start` or `trigger`) schedules exactly one visit, and every scheduled visit is either presented or suppressed; with no invalidation `visits == accepted requests`, and under invalidation at most one visit per falling `VALID` is suppressed (F11) |
 
 **O3 deserves the emphasis it is given here**, because it is the one clause a
 hardware observer could break and a software observer could not. The software
@@ -1108,10 +1117,11 @@ something in hardware.
 
 **The conservation invariant is the companion to O3**, and it is stated as a
 *count* because a count is what catches the errors a sequence diff can miss when
-the wrong answer happens to look plausible. Under any trigger pattern — sparse,
-burst, or back-to-back — the number of visits must equal the number of triggered
-advances. That single equality subsumes the individual failure modes the mutation
-battery (7.6) plants one at a time: a double advancement, an accidental auto-wrap
+the wrong answer happens to look plausible. Its precise form -- every accepted
+request schedules exactly one visit, every scheduled visit is presented or
+suppressed, and the suppressed count is bounded by the invalidations (F11) -- is
+what makes it subsume the individual failure modes the mutation battery (7.6)
+plants one at a time: a double advancement, an accidental auto-wrap
 (the boundary producing two visits), a trigger honoured in `IDLE`, a trigger
 honoured during an invalidation, and an off-by-one at `N - 1` each break it. It is
 expressed over *accepted* triggers rather than *asserted* ones precisely because
@@ -1256,7 +1266,9 @@ building one bank of N entries
              acceptance probability (i+1)/2^k  >  1/2,  so  < 2 next() on average
              plus one bank write
 
-  =>  ~1.5 N  to  2 N  clock cycles to fill N entries
+  =>  measured ~1.4 N:  1.03 N at N = 8,  1.33 N at N = 64,  1.34 N at N = 128,
+      approaching ln 2 * 2 = 1.39 asymptotically
+      (validation/observer_hw.py, bank_fill_cycles; the test prints the table)
 
 one pass at full rate
   =>  N  visits,  N  clocks
@@ -1365,7 +1377,7 @@ long the answer takes* (section 3.3).
 
 **F8 — a Fisher–Yates source cannot keep up with a one-visit-per-cycle stream.**
 This is the finding that shapes v2.0c. The shuffle's per-step rejection draw
-makes a bank cost roughly `1.5N`–`2N` cycles to fill, while the pass that reads it
+makes a bank cost roughly `1.4N` cycles to fill (measured, section 9.3), while the pass that reads it
 is `N` cycles at full rate. So the buffered source has a bounded trigger rate and
 a required bank lead, both of which are now explicit rather than discovered in
 RTL (section 9.3). The affine source exists *because* of this finding.
@@ -1383,6 +1395,30 @@ easy to overclaim: it would be possible to build a version in which a pass
 monopolises the evaluator and software reads slow down. The dedicated-instance
 decision (4.4) is what lets the claim be stated for *both* directions at once,
 and section 7.5 meters both.
+
+**F11 — the conservation invariant is false under invalidation, and the model
+found it.** Section 3.11 originally claimed that refusing a trigger in the cycle
+the context dies keeps the visit count equal to the accepted-trigger count. The
+cycle model (`validation/observer_hw.py`, the first artefact after the freeze)
+falsified that on its first invalidation run: a trigger accepted in cycle `k`
+schedules its visit for `k + 1`, and if `VALID` falls during `k + 1` the cursor
+has moved but the visit is suppressed by the gate of 3.7. The count is short by
+one, not equal. The corrected statement -- every accepted request schedules
+exactly one visit, every scheduled visit is presented or suppressed, and at most
+one visit per falling `VALID` is suppressed -- is now in 3.11 and 7.4. There is a
+second, quieter consequence: "a pass is `N` visits" (O1) is a statement about a
+pass that is allowed to finish, and an aborted pass is a *prefix* of one, which is
+the precise sense in which an abort is not a pass.
+
+**F12 — the section 3.11 table did not resolve `trigger` against a one-shot
+`done`.** The rows `done & oneshot` (leave `RUN`) and `trigger & RUN & valid`
+(advance) can both be true on the same edge, and the table as first written did
+not say which wins -- so the table was not, quite, the "complete decision rule" it
+claimed to be. The model had to choose in order to be written at all, chose
+**completion priority** (the pass has ended, so there is no cursor to advance, and
+the trigger is ignored), and that choice is now a row of 3.11 rather than an
+inherited accident. In continuous mode there is no conflict: a trigger at
+`t = N - 1` is the wrap trigger, and it is meant to begin the next pass.
 
 ---
 
@@ -1435,12 +1471,15 @@ sections 3–6 is open at the level of behaviour. Every remaining item in the ta
 above chooses a geometry, an address range or a trigger set; none of them changes
 the state machine, the one-clock timing, or the contracts at the seams.
 
-The next artefact is therefore `validation/observer_hw.py` — the cycle-level model
-derived directly from this document — together with a test that drives it with the
-edge cases enumerated in 3.11. Its job is to *falsify this specification* before
-any RTL exists, in the same way `validation/bcmc_periph.py` was used to falsify
-`docs/Transaction_Sequences.md`. `rtl/bcmc_observer.v` is written only after that
-model is green, and it is written to satisfy the model, never to replace it.
+That artefact now exists. `validation/observer_hw.py` is the cycle-level model
+derived directly from this document, and `validation/test_observer_hw.py` drives
+it through all of 3.11, O1, O2, P1–P3 and the section 9.3 bound. Executing the
+specification, as v0.4a executed `docs/Transaction_Sequences.md`, found two
+defects — **in this document, not in an implementation**: the conservation
+over-claim (F11) and the unresolved `start`/`done`/`trigger` overlap (F12). Both
+are corrected above. That is the outcome the document-first discipline exists to
+produce: the model is written from the specification in order to falsify it, and
+`rtl/bcmc_observer.v` is written only once the model is green, to satisfy it.
 
 ---
 
