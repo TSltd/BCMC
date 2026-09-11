@@ -2,16 +2,42 @@
 
 > A reference implementation of the Balanced Cyclic Matrix Construction (BCMC) primitive, comprising a formal mathematical specification, executable reference model, verified RTL implementation, memory-mapped SoC interface, portable software driver, and comprehensive verification framework.
 
-**BCMC** (Balanced Cyclic Matrix Construction) is a deterministic construction of binary matrices from integer weight vectors, and a reusable hardware primitive for balanced scheduling of weighted activities. It exactly preserves prescribed row weights while producing a globally balanced column occupancy with a provable imbalance of at most one, and exposing the resulting schedule independently of traversal or execution policy.
+**BCMC** (Balanced Cyclic Matrix Construction) is a deterministic construction of binary matrices from integer weight vectors, and a reusable hardware primitive for balanced distribution or scheduling of weighted activities. It exactly preserves prescribed row weights while producing a globally balanced column occupancy with a provable imbalance of at most one, and exposing the resulting schedule independently of traversal or execution policy.
 
 BCMC deliberately separates construction from interpretation: it constructs a canonical balanced representation, while traversal and application semantics belong entirely to downstream observers.
+
+BCMC distributes weighted occupancy over a cyclic index.
+
+That index might be
+
+- time
+- storage
+- memory
+- frequency
+- space
+- channels
+- shards
+
+The mathematics doesn't care.
+
+Independently, the observer may walk through columns
+
+- sequentially
+- randomly
+- according to a preset pattern
+
+Again, the mathematics doesn't care.
+
+BCMC realizes a balanced distribution over a finite observation frame.
+
+---
 
 The project consists of two complementary parts:
 
 - a mathematically rigorous specification and proof of the BCMC construction,
 - an open-source hardware implementation targeting FPGA and System-on-Chip integration.
 
-The long-term goal is to establish BCMC as a reusable hardware primitive for deterministic balanced scheduling, balanced activation and sparse incidence construction.
+The long-term goal is to establish BCMC as a reusable hardware primitive for deterministic balanced distribution, balanced scheduling, balanced activation and sparse incidence construction.
 
 ---
 
@@ -47,9 +73,10 @@ mathematics at all
 `err` every access that is not exactly right — verified by replaying recorded
 bus conversations from the Python peripheral model, in two simulators
 
-✔ C driver complete: eight primitives, each one bus access, and `bcmc_load()`
-built from nothing but those — compiled unmodified against the Wishbone RTL, and
-held to its cost claims by counting bus accesses
+✔ C driver complete: thirteen primitives — twelve of them exactly one bus access
+and `bcmc_start()` exactly two, because a CTRL write must also decide IRQ_EN —
+and `bcmc_load()` built from nothing but those — compiled unmodified against the
+Wishbone RTL, and held to its cost claims by counting bus accesses
 
 ✔ Observer contract specified and given a Python reference — a traversal is
 proved to contribute order and nothing else, so the Balance Theorem survives
@@ -309,7 +336,7 @@ v1.0  Stable BCMC IP
 
 - The characteristic function in hardware: purely combinational, no clock, no state
 - `mod N` as one comparator and one conditional add — the mirror of the Core's subtract
-- Exhaustive verification: **every** query for `N ≤ 8`, swept to `N ≤ 40`
+- Exhaustive verification: **every** query for `N ≤ 12`, swept to `N ≤ 40`
 - Row and column projections, proven to be nothing but replicated cells
 - Row conservation and the Balance Theorem checked on assembled RTL matrices
 

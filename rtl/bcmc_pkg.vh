@@ -28,6 +28,15 @@
 // offset + weight < 2N. It never needs more: that is exactly why the
 // reduction modulo N is a comparison and a subtraction rather than a
 // division.
+//
+// The default values are intentionally small to keep simulation,
+// exhaustive verification and FPGA builds fast.
+//
+// They are not architectural limits.
+//
+// The BCMC mathematics places no practical upper bound on N or C;
+// larger designs simply instantiate wider arithmetic (VAL_W)
+// and larger context storage (MAX_C).
 
 `define BCMC_VAL_W 16
 `define BCMC_IDX_W 16

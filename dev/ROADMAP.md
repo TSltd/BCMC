@@ -36,7 +36,7 @@ v0.3  -- the BCMC Evaluator                                         [ done ]
 ├── Python reference already in place  bcmc_cell / bcmc_row / bcmc_column
 ├── The characteristic function        rtl/bcmc_cell.v
 ├── Wrap logic                        one comparator and one conditional add
-├── Exhaustive verification           every query for N <= 8, swept to N <= 40
+├── Exhaustive verification           every query for N <= 12, swept to N <= 40
 ├── Row projection    (replication)   rtl/bcmc_row.v
 ├── Column projection (replication)   rtl/bcmc_column.v
 ├── Compositional equivalence         every bit vs a separate bcmc_cell
@@ -137,10 +137,11 @@ v1.0  -- Stable BCMC IP
 
 Post-v1.0
 
-    ├── Contact host organization
+    ├── Community review
+    ├── Host organization discussion
     ├── Gather feedback
-    ├── Address requested changes
-    └── Decide whether to pursue contribution
+    ├── Address feedback
+    └── Future integrations
 
 ```
 

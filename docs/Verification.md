@@ -113,8 +113,11 @@ wrong.
 | `core_random_10k.txt` | 10,000 | 320,272 | soak (`gen_vectors.py --big`)                |
 
 Every case is driven through the DUT **four times** — weights back to back, then
-with 1, 3 and randomised idle cycles between them — so the figures above
-correspond to 44,132 transforms per simulator, or 88,264 in total.
+with 1, 3 and randomised idle cycles between them. The tracked suites in the
+table total 1,033 cases, i.e. 4,132 transforms per simulator, or 8,264 in total;
+with the `--big` soak (`core_random_10k.txt`, generated in place by
+`gen_vectors.py --big`) the totals rise to 11,033 cases and 44,132 transforms
+per simulator, or 88,264 in total.
 
 Each run is checked in five independent ways:
 
@@ -138,8 +141,12 @@ are active in both simulators.
 
 | Simulator           | Harness                  | Result                                |
 | ------------------- | ------------------------ | ------------------------------------- |
-| Verilator 5.020     | `sim/bcmc_core_test.cpp` | 11,033 cases, 44,132 runs, 0 failures |
-| Icarus Verilog 12.0 | `sim/tb_core.v`          | 11,033 cases, 44,132 runs, 0 failures |
+| Verilator 5.020     | `sim/bcmc_core_test.cpp` | 1,033 cases, 4,132 runs, 0 failures   |
+| Icarus Verilog 12.0 | `sim/tb_core.v`          | 1,033 cases, 4,132 runs, 0 failures   |
+
+The tracked suites total 1,033 cases; running `gen_vectors.py --big` adds the
+untracked 10,000-case soak, raising both simulators to 11,033 cases and 44,132
+runs.
 
 Both are lint-clean under `verilator --lint-only -Wall`.
 
@@ -170,11 +177,11 @@ the input space is **finite and small enough to enumerate completely**.
 | Vector file              | Cases | Content                                                                 |
 | ------------------------ | ----- | ----------------------------------------------------------------------- |
 | `cell_edge.txt`          | 410   | `N = 1`, `weight = 0`, `weight = N`, `column = offset`, wrap boundaries |
-| `cell_exhaustive.txt`    | 6,734 | **every** `(N, weight, offset, column)` with `N ≤ 8`                    |
+| `cell_exhaustive.txt`    | 6,734 | **every** `(N, weight, offset, column)` with `N ≤ 12`                   |
 | `cell_random.txt`        | 5,000 | `N` up to 65,535                                                        |
 | `cell_exhaustive_32.txt` | soak  | **every** query with `N ≤ 32` (`gen_vectors.py --big`)                  |
 
-`cell_exhaustive.txt` is exhaustive, not sampled: for `N ≤ 8` it contains every
+`cell_exhaustive.txt` is exhaustive, not sampled: for `N ≤ 12` it contains every
 legal combination of the four inputs, so within that range the module is not
 tested but **proven** by enumeration. The Verilator harness additionally sweeps
 `--sweep 40`, enumerating every query for `N ≤ 40` directly against
