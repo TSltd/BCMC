@@ -78,19 +78,19 @@ step() { echo; echo "===========================================================
 die() { echo; echo "FAILED: $*"; exit 1; }
 
 #---------------------------------------------------------------------------
-step "1/11  the reference model is self-consistent"
+step "1/12  the reference model is self-consistent"
 #---------------------------------------------------------------------------
 
 python3 validation/reference.py       || die "validation/reference.py"
 
 #---------------------------------------------------------------------------
-step "2/11  the reference model agrees with the mathematics"
+step "2/12  the reference model agrees with the mathematics"
 #---------------------------------------------------------------------------
 
 ( cd validation && python3 test_reference.py ) || die "validation/test_reference.py"
 
 #---------------------------------------------------------------------------
-step "3/11  regenerate the vectors from the reference model"
+step "3/12  regenerate the vectors from the reference model"
 #---------------------------------------------------------------------------
 
 if [ "$BIG" -eq 1 ]; then
@@ -100,14 +100,14 @@ else
 fi
 
 #---------------------------------------------------------------------------
-step "4/11  the peripheral model satisfies the register map"
+step "4/12  the peripheral model satisfies the register map"
 #---------------------------------------------------------------------------
 
 ( cd validation && python3 bcmc_periph.py ) || die "validation/bcmc_periph.py"
 ( cd validation && python3 test_periph.py ) || die "validation/test_periph.py"
 
 #---------------------------------------------------------------------------
-step "5/11  the reference observers satisfy the observer contract"
+step "5/12  the reference observers satisfy the observer contract"
 #---------------------------------------------------------------------------
 
 ( cd validation && python3 observers.py )      || die "validation/observers.py"
@@ -120,19 +120,32 @@ step "5/11  the reference observers satisfy the observer contract"
 ( cd validation && python3 gen_observer_vectors.py ) || die "gen_observer_vectors.py"
 
 #---------------------------------------------------------------------------
-step "6/11  record the bus conversations from the peripheral model"
+step "6/12  the hardware observer engine satisfies its specification"
+#---------------------------------------------------------------------------
+
+( cd validation && python3 observer_hw.py )      || die "validation/observer_hw.py"
+( cd validation && python3 test_observer_hw.py ) || die "validation/test_observer_hw.py"
+
+# The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
+# observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
+# model, not a second implementation of anything: it is written from
+# docs/Hardware_Observer_Architecture.md in order to falsify that document
+# before any RTL exists, and it found two defects in it (F11, F12) on first run.
+
+#---------------------------------------------------------------------------
+step "7/12  record the bus conversations from the peripheral model"
 #---------------------------------------------------------------------------
 
 ( cd validation && python3 gen_wb_vectors.py ) || die "gen_wb_vectors.py"
 
 #---------------------------------------------------------------------------
-step "7/11  lint the RTL"
+step "8/12  lint the RTL"
 #---------------------------------------------------------------------------
 
 ./scripts/lint.sh || die "scripts/lint.sh"
 
 #---------------------------------------------------------------------------
-step "8/11  sw/ and examples/ are portable C, under every compiler present"
+step "9/12  sw/ and examples/ are portable C, under every compiler present"
 #---------------------------------------------------------------------------
 
 # The driver has no platform, so a compiler is the only thing it needs, and any
@@ -195,7 +208,7 @@ for cxx in g++ clang++; do
 done
 
 #---------------------------------------------------------------------------
-step "9/11  Verilator: RTL == Python, and the driver == the register map"
+step "10/12  Verilator: RTL == Python, and the driver == the register map"
 #---------------------------------------------------------------------------
 
 mkdir -p sim/build sim/waves
@@ -204,7 +217,7 @@ mkdir -p sim/build sim/waves
 ( cd sim/build && ctest --output-on-failure ) || die "ctest"
 
 #---------------------------------------------------------------------------
-step "10/11  Icarus Verilog: the second opinion"
+step "11/12  Icarus Verilog: the second opinion"
 #---------------------------------------------------------------------------
 
 if [ "$QUICK" -eq 1 ]; then
@@ -219,7 +232,7 @@ else
 fi
 
 #---------------------------------------------------------------------------
-step "11/11  the observer does not matter to the application"
+step "12/12  the observer does not matter to the application"
 #---------------------------------------------------------------------------
 
 # Everything above checks a component against a specification. This checks the

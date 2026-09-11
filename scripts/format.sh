@@ -31,7 +31,8 @@ mapfile -t FILES < <(
        sw/*.c sw/*.h \
        validation/reference.py validation/test_reference.py \
        validation/gen_vectors.py validation/bcmc_periph.py \
-       validation/test_periph.py validation/gen_wb_vectors.py 2>/dev/null
+       validation/test_periph.py validation/gen_wb_vectors.py \
+       validation/observer_hw.py validation/test_observer_hw.py 2>/dev/null
 )
 
 status=0
