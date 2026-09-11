@@ -15,6 +15,8 @@ v0.4–v0.5 Integration
 
 v1.0 Release
 
+v2.0 Autonomy   (independent stream)
+
 ```
 v0.1  -- the mathematics                                            [ done ]
 ├── Mathematics complete
@@ -90,7 +92,13 @@ v0.5  -- Reference Observers
     │                                    examples/common/example_host_mmio.c
     └── Orthogonality, by diff           scripts/run_examples.sh
 
-v0.6  -- FPGA Reference Platform
+v0.6  -- FPGA Reference Platform                                  [ deferred ]
+
+    Deferred by decision until after the v2.0 observer stream. Nothing here is
+    blocked on the observer -- it is a demonstration of RTL that is already
+    verified -- and nothing in the observer is blocked on a board. The empty
+    fpga/tangnano20k/ holds the space, so the deferral is visible rather than
+    forgotten.
 
     ├── Tang Nano 20K integration
     ├── Resource utilisation report
@@ -134,6 +142,30 @@ v1.0  -- Stable BCMC IP
     ├── Reference FPGA design
     ├── Verification complete
     └── First public release
+
+v2.0  -- Hardware Observers
+
+    Independent of the v0.x release stream: it does not block v1.0 and v1.0 does
+    not block it. It moves the third of the project's three questions -- which
+    coordinate next -- out of software and into hardware, beside the constructor
+    it consumes. Design outline: docs/Hardware_Observer.md. v2.0a specification:
+    docs/Hardware_Observer_Architecture.md.
+
+    ├── v2.0a  the sequential observer engine
+    │   ├── The engine and its FSM     rtl/bcmc_observer.v
+    │   ├── Observation sideband       N, C, VALID, weights_flat, offsets_flat
+    │   ├── Traversal-source seam      the identity source only
+    │   ├── Zero bus per visit         proved by metering, not asserted
+    │   └── O1/O2/P1-P4 in hardware
+    ├── v2.0b  the output engine
+    │   ├── column_bits -> pins        rtl/bcmc_out_engine.v
+    │   └── A pure consumer            no traversal, no mathematics
+    ├── v2.0c  traversal sources
+    │   ├── The seam, filled           identity, affine, shuffled
+    │   ├── Affine, streaming          pi(t) = (a t + b) mod N, gcd(a, N) = 1
+    │   ├── Fisher-Yates, buffered     the fill bound is a documented limit
+    │   └── Double-buffered banks      build one pass ahead
+    └── v2.0d  hardware observer applications
 
 Post-v1.0
 

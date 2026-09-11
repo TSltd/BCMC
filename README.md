@@ -92,7 +92,8 @@ scheduler and a mains heater controller — each runnable over either reference
 traversal, from three source files rather than six, all against the real
 verilated peripheral and never a software model of it
 
-⏳ Tang Nano 20K demonstration next (v1.0)
+⏳ Hardware observer next (v2.0a); the Tang Nano 20K demonstration is deferred
+to v1.0
 
 ---
 
@@ -316,6 +317,10 @@ v0.5  Reference Observers
 Release
 ───────
 v1.0  Stable BCMC IP
+
+Autonomy
+────────
+v2.0  Hardware Observers   (an independent stream)
 ```
 
 ## v0.1 — the mathematics ✔
@@ -376,7 +381,15 @@ affecting the mathematical or hardware contracts of the primitive.
   reference traversal, with the orthogonality established by diffing program
   output rather than asserted in a comment ✔
 
-## v0.6 — FPGA Reference Platform
+## v0.6 — FPGA Reference Platform ⏸ deferred
+
+The Tang Nano 20K demonstration is deferred by decision, until after the v2.0
+hardware-observer stream below. Nothing is blocked by the deferral: it is a
+demonstration of RTL that is already verified, and it will report the same
+resource figures whenever it is run. Building the observer while the contracts
+are fresh is worth more than a board bring-up that changes none of them. The
+empty `fpga/tangnano20k/` holds the space, so the deferral is visible rather
+than forgotten.
 
 - Tang Nano 20K integration
 - Resource utilisation report
@@ -429,12 +442,31 @@ affecting the mathematical or hardware contracts of the primitive.
 - Address feedback
 - Future integrations
 
+## v2.0 — Hardware Observers
+
+The observer stream is independent of the v0.x release stream: it does not block
+v1.0 and v1.0 does not block it. It moves the third of the project's three
+questions — *which coordinate next* — out of software and into hardware, beside
+the constructor it consumes, so that software is asked only for what it alone
+can supply: the weights. See `docs/Hardware_Observer.md` for the architecture,
+and `docs/Hardware_Observer_Architecture.md` for the v2.0a specification.
+
+- **v2.0a — Sequential observer engine.** The engine and its state machine, the
+  observation sideband (`N`, `C`, `VALID`, the flat windows), the traversal-source
+  seam, and a pass whose every visit costs zero bus accesses.
+- **v2.0b — The output engine.** `column_bits` turned into pins: a pure consumer
+  with no traversal and no mathematics.
+- **v2.0c — Traversal sources.** The seam filled: the identity source, a
+  streaming affine source, and a buffered seeded Fisher–Yates source with its
+  fill bound made explicit.
+- **v2.0d — Hardware observer applications.** The hardware forms of the software
+  examples.
+
 ## Future
 
 - AXI-Lite wrapper
-- Streaming observer
-- DMA observer
 - Multi-instance BCMC
+- DMA-fed output engine
 
 # Design Philosophy
 
