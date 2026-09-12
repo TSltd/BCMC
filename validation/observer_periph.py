@@ -106,7 +106,13 @@ _ONE_SHOT_BITS = (CTRL_START, CTRL_STEP, CTRL_RESET)
 # generator and the replayer cannot drift from each other; sim/CMakeLists.txt
 # must build rtl/bcmc_obs_wb.v with the same numbers, and the first recording
 # reads OBS_CAPS so that a mismatch fails loudly rather than subtly.
-REF_MAX_C = 64
+#
+# They are also rtl/bcmc_obs_wb.v's own default parameters, so that the Icarus
+# second opinion -- which elaborates the module without -P -- is held against
+# the same geometry as the Verilator path. The document leaves MAX_C free (it is
+# a synthesis parameter, reported in OBS_CAPS, not a fixed quantity), so this is
+# a choice; it is made once, here, and 32 is the engine's own build geometry.
+REF_MAX_C = 32
 REF_VAL_W = 16
 REF_IDX_W = 16
 

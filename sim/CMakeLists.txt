@@ -265,13 +265,15 @@ verilate(bcmc_wb_test
 # another.
 #
 # These three must match validation/observer_periph.py's REF_MAX_C, REF_VAL_W
-# and REF_IDX_W, which the generator and the replayer both take as defaults.
-# Nothing enforces that at build time and nothing needs to: the corpus's first
-# recording reads OBS_CAPS, which encodes all three, so a mismatch fails on the
-# third op of the file.
+# and REF_IDX_W, which the generator and the replayer both take as defaults, and
+# which are also rtl/bcmc_obs_wb.v's own default parameters -- so the Icarus
+# second opinion, which elaborates the module without -P, is held against the
+# same geometry. Nothing enforces that at build time and nothing needs to: the
+# corpus's first recording reads OBS_CAPS, which encodes all three, so a
+# mismatch fails on the third op of the file.
 #---------------------------------------------------------------------------
 
-set(BCMC_OBSWB_MAX_C 64)
+set(BCMC_OBSWB_MAX_C 32)
 set(BCMC_OBSWB_VAL_W 16)
 set(BCMC_OBSWB_IDX_W 16)
 
