@@ -133,12 +133,29 @@ module bcmc_src_affine #(
     localparam [31:0] MUL1   = 32'h21F0AAAD;
     localparam [31:0] MUL2   = 32'h735A2D97;
 
-    reg  [31:0] pstate_q;
+    reg  [31:0] pstate_q;      // the *counter*. Not the output: see below.
 
-    wire [31:0] p_inc  = pstate_q + GOLDEN;
-    wire [31:0] p_z2   = (p_inc ^ (p_inc >> 16)) * MUL1;
-    wire [31:0] p_z3   = (p_z2 ^ (p_z2 >> 15)) * MUL2;
-    wire [31:0] p_next = p_z3 ^ (p_z3 >> 15);
+    // SplitMix32 keeps the counter as its state, and derives each output by
+    // mixing the counter after incrementing it. The register therefore advances
+    // to `p_count`, never to `p_next`.
+    //
+    // This module assigned `p_next` back into the state until the bench caught
+    // it, and the failure is worth recording because it is invisible to every
+    // check except this one: the first draw from a given seed is *correct*
+    // either way, so a derivation that accepts its first draw agrees with the
+    // reference, and agreement then decays one draw at a time. It reproduced
+    // 8/8 of the observed wrong pairs exactly.
+    wire [31:0] p_count = pstate_q + GOLDEN;               // next counter value
+    wire [31:0] p_z2    = (p_count ^ (p_count >> 16)) * MUL1;
+    wire [31:0] p_z3    = (p_z2 ^ (p_z2 >> 15)) * MUL2;
+    wire [31:0] p_out   = p_z3 ^ (p_z3 >> 15);             // this draw's output
+
+    // `p_out` is left at its full 32 bits and the *mask* is the same width, so
+    // the draw and the range check happen at the generator's own width and every
+    // bit of it is read. Narrowing `p_out` to VAL_W here would be honest about
+    // what is consumed but would leave the discarded bits unused, and the two
+    // ways to silence that -- a lint waiver, or a part-select tuned to VAL_W --
+    // are both worse than keeping the widths natural.
 
     //-----------------------------------------------------------------------
     // Registers
@@ -160,7 +177,7 @@ module bcmc_src_affine #(
 
     reg [2:0]       state_q;
     reg             ready_q;
-    reg [VAL_W-1:0] mask_q;
+    reg [31:0]      mask_q;
     reg [VAL_W-1:0] a_q;
     reg [VAL_W-1:0] b_q;
     reg [VAL_W-1:0] eu_q;
@@ -169,13 +186,13 @@ module bcmc_src_affine #(
     reg [VAL_W-1:0] cur_q;      // pi(ts_t) as of the last cycle
     reg [VAL_W-1:0] ts_t_q;     // ts_t as of the last cycle -- see the seam
 
-    wire [VAL_W-1:0] m = N - {{(VAL_W-1){1'b0}}, 1'b1};   // uniform(N-1)
+    wire [31:0] m = {{(32-VAL_W){1'b0}}, N} - 32'd1;   // uniform(N-1)
 
     // A draw is the next generator output masked to the current width, accepted
     // when it lands inside the range. A rejected draw is *consumed*: the state
     // advances either way, which is what section 4.3 requires, and what drawing
     // `b` from the same advancing stream depends on.
-    wire [VAL_W-1:0] draw    = p_next[VAL_W-1:0] & mask_q;
+    wire [31:0] draw    = p_out & mask_q;
     wire             draw_ok = (draw <= m);
     wire             mask_ok = (mask_q >= m);
 
@@ -244,7 +261,7 @@ module bcmc_src_affine #(
             cur_q    <= {VAL_W{1'b0}};
             ts_t_q   <= {VAL_W{1'b0}};
             n_q      <= {VAL_W{1'b0}};
-            mask_q   <= {{(VAL_W-1){1'b0}}, 1'b1};
+            mask_q   <= 32'd1;
             eu_q     <= {VAL_W{1'b0}};
             ev_q     <= {VAL_W{1'b0}};
         end else begin
@@ -260,7 +277,7 @@ module bcmc_src_affine #(
                 ready_q  <= 1'b0;
                 n_q      <= N;
                 pstate_q <= seed;
-                mask_q   <= {{(VAL_W-1){1'b0}}, 1'b1};
+                mask_q   <= 32'd1;
                 state_q  <= S_MASK_A;
             end else begin
                 case (state_q)
@@ -271,11 +288,11 @@ module bcmc_src_affine #(
                     // iterations when m <= 1, which is what uniform(0) wants.
                     S_MASK_A: begin
                         if (mask_ok) state_q <= S_DRAW_A;
-                        else mask_q <= (mask_q << 1) | {{(VAL_W-1){1'b0}}, 1'b1};
+                        else mask_q <= (mask_q << 1) | 32'd1;
                     end
 
                     S_DRAW_A: begin
-                        if (m == {VAL_W{1'b0}}) begin
+                        if (m == 32'd0) begin
                             // uniform(0) is 0 and consumes nothing -- the pinned
                             // generator says so, and N = 1 must agree with it.
                             a_q     <= {VAL_W{1'b0}};
@@ -283,10 +300,10 @@ module bcmc_src_affine #(
                             ev_q    <= N;
                             state_q <= S_G_STEP;
                         end else begin
-                            pstate_q <= p_next;  // consumed, taken or not
+                            pstate_q <= p_count; // the COUNTER, not p_next
                             if (draw_ok) begin
-                                a_q     <= draw;
-                                eu_q    <= draw;
+                                a_q     <= draw[VAL_W-1:0];
+                                eu_q    <= draw[VAL_W-1:0];
                                 ev_q    <= N;
                                 state_q <= S_G_STEP;
                             end
@@ -307,7 +324,7 @@ module bcmc_src_affine #(
                     end
 
                     S_G_DONE: begin
-                        mask_q <= {{(VAL_W-1){1'b0}}, 1'b1};
+                        mask_q <= 32'd1;
                         if (eu_q == {{(VAL_W-1){1'b0}}, 1'b1}) begin
                             state_q <= S_MASK_B;    // coprime: draw b next
                         end else begin
@@ -317,17 +334,17 @@ module bcmc_src_affine #(
 
                     S_MASK_B: begin
                         if (mask_ok) state_q <= S_DRAW_B;
-                        else mask_q <= (mask_q << 1) | {{(VAL_W-1){1'b0}}, 1'b1};
+                        else mask_q <= (mask_q << 1) | 32'd1;
                     end
 
                     S_DRAW_B: begin
-                        if (m == {VAL_W{1'b0}}) begin
+                        if (m == 32'd0) begin
                             b_q     <= {VAL_W{1'b0}};
                             state_q <= S_IDLE;
                         end else begin
-                            pstate_q <= p_next;
+                            pstate_q <= p_count; // consumed, taken or not
                             if (draw_ok) begin
-                                b_q     <= draw;
+                                b_q     <= draw[VAL_W-1:0];
                                 state_q <= S_IDLE;
                             end
                         end
@@ -350,6 +367,10 @@ module bcmc_src_affine #(
 
 `ifndef SYNTHESIS
     initial begin
+        if (VAL_W > 32) begin
+            $display("bcmc_src_affine: ERROR VAL_W = %0d (VAL_W <= 32)", VAL_W);
+            $stop;
+        end
         if (VAL_W < 1) begin
             $display("bcmc_src_affine: ERROR VAL_W = %0d (VAL_W >= 1 required)", VAL_W);
             $stop;
