@@ -147,7 +147,8 @@ int run_affine(const std::string& path) {
     if (!read_records(path, recs)) return 1;
 
     Vbcmc_src_affine dut;
-    Affine m{dut};
+    Affine m;
+    m.dut = &dut;
     dut.clk = 0; dut.rst = 1; dut.N = 1; dut.seed = 0;
     dut.load = 0; dut.ts_t = 0;
     dut.eval();
