@@ -729,6 +729,15 @@ anyway, because the wrapper latches the level into its own RW1C bit alongside
 (This was a genuine inconsistency in the RTL: its port comment said "sticky until
 load" while this section's per-boundary rule describes a level.)
 
+It is **load-bearing rather than diagnostic**, which the second simulator made
+concrete. Two consecutive banks can be the *same permutation* — always for
+`N = 1`, and whenever a small `N`'s stream comes round to the same one again, as
+`N = 2` does in `q_n2_s1`, where both permutations of `{0, 1}` are `[1, 0]`. On
+such a pass the traversal cannot distinguish a handoff from a repeat **at all**,
+and `underrun` is the only observable that can. That is why the corpus carries a
+bank stream that repeats, and why the harnesses check the flag rather than
+treating it as a convenience.
+
 **What a partial bank would actually do depends on how the bank is built, and the
 model corrected this paragraph's original reasoning.** The first draft said that
 repeating a permutation is a bijection while "serving a half-filled bank would
@@ -1069,6 +1078,16 @@ recorded schedule. Its negative control, `scripts/mutate_bank_isolation.sh`, pla
 the very fault §5.5 says the corpus must not be able to see — a shuffle write that
 addresses the bank being read — and requires the run to detect it. It does, and the
 mutant elaborates cleanly, so the control is runtime-only as intended.
+
+All three sources are now exercised by a **second** simulator as well:
+`sim/bcmc_src_test.cpp` replays these same corpora under Verilator — read in C++,
+with expectations derived independently, the affine from the closed form and the
+shuffled source from the corpus's own pinned banks. Getting it green cost **four
+defects, all in the harness and none in the RTL**: a DUT pointer initialised with
+the object; the `W` record's cycle count driven as an ask; a bank identified by
+counting asks rather than by matching the whole pass; and a load that did not
+reset the bank cursor. That asymmetry is what a second consumer is for — and the
+last two are the reason §7.3's flag is load-bearing rather than diagnostic.
 
 Reaching that took five revisions and seven defects, every one found by a consumer
 rather than by reading: the written-mask was `X`; the generation tag aliased after
