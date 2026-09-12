@@ -1,10 +1,13 @@
 # BCMC Traversal Sources — the v2.0c Specification
 
-> **Status: specification, not frozen.** Sections 1 to 8 are the contract an
-> implementation and its model are held to. They are not settled until
-> `validation/traversal_sources.py` has run: three times now, executing a document
-> has found defects *in the document* rather than in an implementation, and that
-> is what the model is for. RTL comes after the model is green.
+> **Status: specification, corrected by its model.** Sections 1 to 8 are the
+> contract an implementation and its model are held to. They have now been
+> executed: `validation/traversal_sources.py` ran and found two defects *in this
+> document* — §4.2's unstated precondition and §7.3's rationale — both corrected
+> in place, and `validation/test_traversal_sources.py` holds them with 211 checks
+> across the identity, affine and shuffled layers. Four times now, executing a
+> document has found defects in the document rather than in an implementation,
+> and that is what the models are for. The RTL comes next.
 >
 > `docs/Traversal_Sources.md` opened this phase and answered nothing; this
 > document answers its §5 agenda — all ten items — and **amends one claim in that
@@ -282,6 +285,16 @@ and a *correct* one for all the small `N` a testbench is likely to use first,
 which is the worst possible shape of bug. It is called out here so it is called
 out in the RTL.
 
+**The precondition is `a < N`, and it is not optional.** One conditional subtract
+reduces a sum below `N` only if the sum was below `2N`, which requires `a < N`.
+§4.3 always yields `a <= N - 1`, so the precondition is satisfied by construction
+— but it is what makes the incremental form *equivalent* to the closed form rather
+than merely similar, and it is invisible in the code above. A table-driven or
+software-driven step, or a step carried over from a larger `N`, would satisfy the
+RTL's types and walk the wrong permutation. The model enforces the precondition
+rather than assuming it, and the RTL should assert it in the same `ifndef
+SYNTHESIS` spirit as `rtl/bcmc_observer.v`'s local checks.
+
 ### 4.3 The seed policy, pinned exactly
 
 `docs/Traversal_Sources.md` §5 item 3 asked how `(a, b)` come from a 32-bit seed
@@ -402,6 +415,16 @@ runs *in the background*, filling the inactive bank while the active one is read
 The only question is whether it finishes in time, and that is a statement about
 the **lead** (§7), not about the visit timing. §1.1 is what makes this work: a
 combinational read at the seam is why a slow bank does not become a slow visit.
+
+**The bank is shuffled in place, and this has to be said because it decides what a
+partial bank would even mean.** The bank is initialised to the identity and the
+`N - 1` swaps are applied to it directly, `p[i], p[j] = p[j], p[i]`, exactly as
+`docs/Observers.md`'s software family and `observer_hw.bank_fill_cycles` do. The
+alternative — computing the permutation elsewhere and writing the result into the
+bank — is not what any existing artifact describes and would give a partially
+filled bank entirely different semantics. §7.3 depends on this choice, so it is
+fixed here rather than left to the RTL: every intermediate state of an in-place
+shuffle is a valid permutation, which is a property §7.3 must account for.
 
 ### 5.3 The geometry
 
@@ -576,12 +599,34 @@ where §2.1 pays off a second time:
 > incomplete one, and it does not stall.
 
 That single choice means **O1 holds unconditionally**, for every source, in every
-configuration, including a misconfigured one. Repeating a permutation is still a
-bijection; serving a half-filled bank would not be. So the rate bound is not a
+configuration, including a misconfigured one. The rate bound is therefore not a
 correctness precondition at all — it is a **freshness** precondition, and
 violating it degrades the traversal's smoothness rather than its validity, exactly
 as running too fast would degrade any schedule. `SEED_UNDERRUN` reports it, sticky
 until cleared through the RW1C bit like `DONE` and `ABORTED`.
+
+**What a partial bank would actually do depends on how the bank is built, and the
+model corrected this paragraph's original reasoning.** The first draft said that
+repeating a permutation is a bijection while "serving a half-filled bank would
+not be", and that is true only for one of the two constructions:
+
+- **A shuffle performed in place** — `p[i], p[j] = p[j], p[i]` over an
+  identity-initialised bank, which is what `docs/Observers.md`'s software family
+  and `observer_hw.bank_fill_cycles` both describe — leaves a *permutation at
+  every intermediate step*, because a swap preserves the multiset. Reading such a
+  bank early yields a perfectly good bijection, so **O1 does not catch it**; the
+  traversal would simply be a worse shuffle, silently.
+- **A shuffle written into the bank as a result**, where entries not yet computed
+  still hold their reset value, is not a bijection while incomplete, and O1
+  catches it immediately.
+
+So the reason for the rule is not that a partial bank always violates O1. It is
+that **a partial bank's validity depends on an implementation detail that nothing
+else observes**, and the in-place case fails silently in exactly the way O1
+cannot detect. Repeating a complete bank is the only choice whose correctness does
+not depend on knowing which construction the RTL used. §5.2 fixes the
+construction as in-place, which is what makes this paragraph's conclusion right
+for the stated reason rather than by luck.
 
 That is a better contract than the opening document anticipated, and it is worth
 naming as the reason not to fear the bound: the worst a too-fast trigger can do is
@@ -751,24 +796,52 @@ is structural, while "a shuffled visit costs one bank read" is a count.
 13. **Each source declares only the interface it uses** (§8.1), so no lint waiver
     hides an unused input.
 
+### Corrected by the model
+
+These are the two the model found, and they are recorded here because a document
+that quietly absorbs a correction teaches nothing:
+
+14. **§4.2's incremental form has an unstated precondition, `a < N`.** One
+    conditional subtract reduces a sum below `N` only if the sum was below `2N`.
+    §4.3 satisfies it by construction, but the form is not *equivalent* to the
+    closed form without it, and a step carried over from a larger `N` would walk
+    the wrong permutation while satisfying every type in the RTL. Now stated in
+    §4.2, enforced in the model, and owed an assertion in the RTL.
+15. **§7.3's original rationale for the repeat-on-underrun rule was wrong as
+    stated.** "Serving a half-filled bank would not be [a bijection]" is true only
+    for a bank written as a *result*. An in-place shuffle is a permutation at every
+    intermediate step, so a partial bank taken from one is a valid bijection and
+    **O1 cannot detect it** — a silent failure. §5.2 now fixes the construction as
+    in-place, and §7.3's conclusion stands for the correct reason: the repeat rule
+    is the only choice that does not depend on an implementation detail nothing
+    else observes.
+
 ### Remaining, and who decides
 
 | Open question | Decided by | When |
 | --- | --- | --- |
 | Whether the reference build instantiates all three sources or parameterises one (`SOURCE`) for a trimmed synthesis build | the model, then the RTL | with the RTL, cheaply |
-| The exact `BANK_N_MAX` and `LEAD` defaults | the model's measurement | with the model |
-| The model's file name (`traversal_sources.py` assumed) | this document | now, cheaply reversible |
+| The exact `BANK_N_MAX` and `LEAD` defaults | settled here: 256 and 2 (§5.3, §5.4), measured by the model | settled |
+| The model's file name | settled: `validation/traversal_sources.py` | settled |
 | Whether a source should be per *observer instance* rather than per window | a v2.0d or later specification | with applications |
 | Whether `SEED_UNDERRUN` should refuse anything | nobody — a diagnostic by decision (§2.3) | settled |
 
 ### Status
 
-Sections 1 to 8 are **specification**, and are not frozen until
-`validation/traversal_sources.py` has run. Three findings are already on the
-record: §2 declined to spend a requalification that was available, §5.4 corrects
-one the architecture document made, and §6.4 records a coupling that was invisible
-until the frozen corpus was read carefully. The model exists to find more, and the
-RTL comes after it.
+Sections 1 to 8 are **specification**, corrected twice by
+`validation/traversal_sources.py` and held by
+`validation/test_traversal_sources.py` — 211 checks across the three layers, with
+four mutants caught and one documented gap. The five earlier findings remain on
+the record: §2 declined to spend a requalification that was available, §5.4
+corrects one the architecture document made, and §6.4 records a coupling invisible
+until the frozen corpus was read carefully. The model has run; the RTL is next.
+
+The gap is worth naming plainly, because it is the one thing the suite cannot
+check: an in-place partial bank is invisible to O1, so **the "repeat a complete
+bank" rule is not validated by any property test** — it is validated by the
+argument in §7.3 that the alternative is unobservable. The RTL's testbenchers
+should therefore treat "the active bank is never read mid-fill" as a structural
+property to assert directly, not as a consequence of O1.
 
 ---
 
@@ -784,5 +857,8 @@ requalify), `docs/Observers.md` (O1–O3 and the pinned software family),
 `rtl/bcmc_observer.v` (whose two documented lines are the change point), and
 `validation/observer_hw.py`'s `bank_fill_cycles`.
 
-**Status.** Specification, **not frozen**. The next artefact is
-`validation/traversal_sources.py`, and it exists to prove this document wrong.
+**Status.** Specification. `validation/traversal_sources.py` has run and corrected
+it twice (§4.2's precondition, §7.3's rationale, and §5.2's newly-fixed bank
+construction); `validation/test_traversal_sources.py` holds it with 211 checks
+across the three layers. The next artefacts are the three source modules and the
+two-port engine change of §8.2, attacked independently.
