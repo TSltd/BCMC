@@ -32,11 +32,15 @@
 //
 // What is deliberately NOT checked
 // --------------------------------
-// The bank states, the fill's progress, the generation tags, the shuffle index:
-// none is a port, and none is the contract. The bank-isolation invariant is an
+// The bank states, the fill's progress, the written-mask, the shuffle index: none
+// is a port, and none is the contract. The bank-isolation invariant is an
 // assertion inside the module -- it is reachable only through the interface for
 // the ordinary path, and reachable in *no* path if a mutation breaks it, which is
 // why it is not left to a bench to notice.
+//
+// A mismatch is reported with the ask and both candidate values, once per pass:
+// the failure mode to distinguish is "ts_pi reads as the identity", which looks
+// like every ask of every pass being wrong at once.
 //
 // Generic Verilog-2005. Nothing here is specific to any FPGA family.
 //===========================================================================
@@ -166,7 +170,7 @@ module tb_src_shuffled;
     // The scan
     //-----------------------------------------------------------------------
 
-    integer k, v, saw_new, saw_rep, new_ok, rep_ok, pass;
+    integer k, v, saw_new, saw_rep, new_ok, rep_ok, pass, first_bad;
     reg [8*2-1:0] kindstr;
 
     initial begin : main
@@ -257,6 +261,7 @@ module tb_src_shuffled;
                     // The asks: 0, 1, .., N-1, each held `gap` cycles.
                     saw_new = 0;
                     saw_rep = 0;
+                    first_bad = -1;
                     for (t = 0; t < N; t = t + 1) begin
                         ts_t = t[VAL_W-1:0];
                         for (g = 0; g < gap; g = g + 1) begin
@@ -265,15 +270,33 @@ module tb_src_shuffled;
                             n_checks = n_checks + 1;
                             if (ready !== 1'b1) fail("ready low during a pass");
                             if (cur < 0) begin
-                                if (ts_pi !== exp_bank[0*BANK_N + t])
+                                if (ts_pi !== exp_bank[0*BANK_N + t]) begin
+                                    if (first_bad < 0) begin
+                                        first_bad = t;
+                                        $display("    pass %0d ask %0d: ts_pi %0d, bank 0 has %0d",
+                                                 pass, t, ts_pi,
+                                                 exp_bank[0*BANK_N + t]);
+                                    end
                                     fail("the first pass is not bank 0");
+                                end
                             end else begin
                                 new_ok = ((cur + 1) < nbank) &&
                                          (ts_pi === exp_bank[(cur+1)*BANK_N + t]);
                                 rep_ok = (ts_pi === exp_bank[cur*BANK_N + t]);
                                 if (new_ok) saw_new = 1;
                                 else if (rep_ok) saw_rep = 1;
-                                else fail("ts_pi is neither the new bank nor the repeat");
+                                else begin
+                                    if (first_bad < 0) begin
+                                        first_bad = t;
+                                        $display("    pass %0d ask %0d: ts_pi %0d",
+                                                 pass, t, ts_pi);
+                                        $display("      bank %0d has %0d, bank %0d has %0d",
+                                                 cur, exp_bank[cur*BANK_N + t],
+                                                 cur + 1,
+                                                 exp_bank[(cur+1)*BANK_N + t]);
+                                    end
+                                    fail("ts_pi is neither the new bank nor the repeat");
+                                end
                             end
                             clock1();
                         end

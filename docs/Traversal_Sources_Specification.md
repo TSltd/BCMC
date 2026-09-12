@@ -516,13 +516,24 @@ three, and `R = 1` would go from unreachable to further unreachable.
 
 So the identity is **implicit**: each bank carries a written-mask, a read of an
 unwritten entry returns its own index, and a swap marks both entries written. The
-mask is cleared by reset in one cycle, which materialising `N` entries cannot be.
-The two are equivalent *for a complete bank* — an entry no swap ever touched holds
-its index in the reference too — and §7's rule means a partial bank is never read,
-so nothing else has to match. `bank_fill_cycles` therefore stays the right
-measurement, and §5.4's table is unchanged. The cost is the mask (one bit per
-entry, per bank) and a multiplexer on the read path, and it is worth stating that
-this is what the number in §5.2 assumes.
+mask is one bit per entry, held as a **packed vector** so that clearing the bank
+being filled is a single assignment rather than a loop, and it is cleared at each
+fill start — which materialising `N` entries cannot be. The two are equivalent
+*for a complete bank* — an entry no swap ever touched holds its index in the
+reference too — and §7's rule means a partial bank is never read, so nothing else
+has to match. `bank_fill_cycles` therefore stays the right measurement, and §5.4's
+table is unchanged. The cost is the mask (one bit per entry) and a multiplexer on
+the read path, and it is worth stating that this is what the number in §5.2
+assumes.
+
+**The mask is cleared per bank, not wholesale, and that is not a detail.** The
+first implementation cleared the whole mask when a fill started, which would have
+erased the *playing* bank's flags and made its untouched entries read as stale
+data rather than as their indices. Only the bank being filled may be cleared.
+Verilog-2005 makes this the natural expression as well: with the mask packed, the
+clear is `mask <= mask & ~bank_mask` and the two swap bits are
+`mask <= mask | bit_i | bit_j` — one assignment each, which is what a vector can
+do and what an array of separate registers cannot.
 
 **A swap is two bank writes, so a step needs two write ports.** §5.2's "plus one
 bank write" per step is a shorthand: the step writes position `i` *and* position

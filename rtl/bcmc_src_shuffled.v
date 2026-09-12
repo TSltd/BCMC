@@ -108,7 +108,7 @@ module bcmc_src_shuffled #(
     //--- the two banks, and the mask that makes the identity implicit ---------
 
     reg [VAL_W-1:0] bank_q  [0:DEPTH-1];
-    reg             wgen_q  [0:DEPTH-1];   // the generation each entry was written in
+    reg [DEPTH-1:0] wmask_q;               // 1 = this entry has been written
 
     //--- registers ------------------------------------------------------------
 
@@ -124,8 +124,6 @@ module bcmc_src_shuffled #(
     reg             ready_q;       // start-up latched
     reg             underrun_q;    // sticky until load
     reg [VAL_W-1:0] ts_t_q;        // ts_t last cycle: the boundary detector
-    reg             gen0_q;        // bank 0's generation: flipping it clears it
-    reg             gen1_q;        // bank 1's generation
 
     wire [31:0] p_count = pstate_q + GOLDEN;               // next counter value
     wire [31:0] p_z2    = (p_count ^ (p_count >> 16)) * MUL1;
@@ -164,7 +162,6 @@ module bcmc_src_shuffled #(
     //--- the read path --------------------------------------------------------
 
     wire [1:0] st_other  = playing_q ? st0_q : st1_q;
-    wire       gen_read  = read_bank ? gen1_q : gen0_q;
 
     // The first pass plays bank 0; later ones play the other bank, and only if it
     // is complete -- otherwise this is an underrun and the current bank repeats.
@@ -182,8 +179,7 @@ module bcmc_src_shuffled #(
     // rubbish -- which is exactly why the assertion, and not O1, is the check.
     wire readable = (st_read == ST_COMPLETE) || (st_read == ST_PLAYING);
 
-    assign ts_pi = (readable && (wgen_q[rd_addr] == gen_read))
-                 ? bank_q[rd_addr] : ts_t;
+    assign ts_pi = (readable && wmask_q[rd_addr]) ? bank_q[rd_addr] : ts_t;
 
     assign ready    = ready_q;
     assign underrun = underrun_q;
@@ -203,11 +199,19 @@ module bcmc_src_shuffled #(
     wire [AW:0]      f_jaddr = {fill_bank_q, f_draw[AW-1:0]};
 
     // The implicit identity: an entry no swap has written reads as its own index.
-    wire       gen_fill = fill_bank_q ? gen1_q : gen0_q;
+    wire [VAL_W-1:0] f_vi = wmask_q[f_iaddr] ? bank_q[f_iaddr] : i_q;
+    wire [VAL_W-1:0] f_vj = wmask_q[f_jaddr] ? bank_q[f_jaddr]
+                                            : f_draw[VAL_W-1:0];
 
-    wire [VAL_W-1:0] f_vi = (wgen_q[f_iaddr] == gen_fill) ? bank_q[f_iaddr] : i_q;
-    wire [VAL_W-1:0] f_vj = (wgen_q[f_jaddr] == gen_fill) ? bank_q[f_jaddr]
-                                                          : f_draw[VAL_W-1:0];
+    // Setting a bit in a packed mask is ONE assignment, not two: a shift per
+    // address, ORed in together. Two non-blocking assignments to the same vector
+    // at different bits would fight and the last would win, which is why the mask
+    // is a vector and the writes are a single expression.
+    wire [DEPTH-1:0] f_m_i  = {{(DEPTH-1){1'b0}}, 1'b1} << f_iaddr;
+    wire [DEPTH-1:0] f_m_j  = {{(DEPTH-1){1'b0}}, 1'b1} << f_jaddr;
+    wire [DEPTH-1:0] f_bclr = f_empty_bank
+                            ? {{BANK_N_MAX{1'b0}}, {BANK_N_MAX{1'b1}}}
+                            : {{BANK_N_MAX{1'b1}}, {BANK_N_MAX{1'b0}}};
 
     wire [0:0] f_empty_bank = (st0_q == ST_EMPTY) ? 1'b0 : 1'b1;
     wire       f_any_empty  = (st0_q == ST_EMPTY) || (st1_q == ST_EMPTY);
@@ -244,10 +248,11 @@ module bcmc_src_shuffled #(
             ready_q     <= 1'b0;
             underrun_q  <= 1'b0;
             ts_t_q      <= {VAL_W{1'b0}};
-            // The masks are NOT cleared here. A fill clears its own bank's mask
-            // before it writes anything, so a stale mask is never read: a bank is
-            // only readable in COMPLETE or PLAYING, and both are reached through a
-            // fill that cleared it.
+            // The whole mask is cleared here as well as at each fill start. It is
+            // not strictly needed -- a bank is only readable in COMPLETE or
+            // PLAYING, and both are reached through a fill that cleared it -- but
+            // it costs one cycle and it means no entry of the mask is ever X.
+            wmask_q     <= {DEPTH{1'b0}};
         end else if (load) begin
             // A new seed means a new stream: the counter restarts and both banks
             // are emptied. Readiness clears with them and latches again once LEAD
@@ -263,6 +268,7 @@ module bcmc_src_shuffled #(
             built_q     <= 2'd0;
             ready_q     <= 1'b0;
             underrun_q  <= 1'b0;
+            wmask_q     <= {DEPTH{1'b0}};
         end else begin
             ts_t_q <= ts_t;
 
@@ -272,11 +278,14 @@ module bcmc_src_shuffled #(
                     fill_busy_q <= 1'b1;
                     fill_bank_q <= f_empty_bank;
                     i_q         <= N - {{(VAL_W-1){1'b0}}, 1'b1};    // N-1 down to 1
-                    // Clearing the bank is ONE bit, not N writes: every entry
-                    // carries the generation it was written in, so flipping the
-                    // bank's generation makes all of them unwritten at once.
-                    if (f_empty_bank) gen1_q <= ~gen1_q;
-                    else              gen0_q <= ~gen0_q;
+                    // The identity is implicit: every entry of the bank is
+                    // marked unwritten in ONE cycle, in parallel, and an entry no
+                    // swap touches then reads as its own index. BLOCKING
+                    // assignment, deliberately: Verilator refuses a non-blocking
+                    // write to an array inside a loop (BLKLOOPINIT), and nothing in
+                    // this block reads the mask, so there is no ordering hazard
+                    // between this and the swap writes below.
+                    wmask_q <= wmask_q & ~f_bclr;
                 end
             end else if (i_q == {VAL_W{1'b0}}) begin
                 // N = 1. The shuffle has no steps at all and `permuted_order(1,
@@ -291,12 +300,9 @@ module bcmc_src_shuffled #(
                 if (f_take) begin
                     // The swap: two writes, in this cycle, to two entries. When
                     // j == i they name the same entry, and the second is skipped.
-                    bank_q[f_iaddr]  <= f_vj;
-                    wgen_q[f_iaddr]  <= gen_fill;
-                    if (f_jaddr != f_iaddr) begin
-                        bank_q[f_jaddr]  <= f_vi;
-                        wgen_q[f_jaddr]  <= gen_fill;
-                    end
+                    bank_q[f_iaddr] <= f_vj;
+                    if (f_jaddr != f_iaddr) bank_q[f_jaddr] <= f_vi;
+                    wmask_q <= wmask_q | f_m_i | f_m_j;
                     if (i_q == {{(VAL_W-1){1'b0}}, 1'b1}) begin
                         fill_busy_q <= 1'b0;     // i = 1 was the last step
                         if (fill_bank_q) st1_q <= ST_COMPLETE;
