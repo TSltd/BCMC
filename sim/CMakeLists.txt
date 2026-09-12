@@ -296,6 +296,39 @@ verilate(bcmc_obs_wb_test
                  -GIDX_W=${BCMC_OBSWB_IDX_W} -GMAX_C=${BCMC_OBSWB_MAX_C})
 
 #---------------------------------------------------------------------------
+# bcmc_out_engine: the output engine, every cycle
+#
+# One module, one output, no submodules: the block is a pattern register, a
+# presentation gate and a destroy. There is nothing inside it to compare against
+# and that is the point -- the comparison is with validation/output_engine.py,
+# and it arrives as a recorded stimulus with the expected `pins_o` beside it.
+#
+# `pins_o` is the WHOLE observable contract, so comparing it every cycle is not a
+# partial check. `pattern_q` is model state and is neither in the corpus nor
+# exported by the module.
+#
+# The geometry must match validation/output_engine.py's REF_MAX_C and
+# rtl/bcmc_out_engine.v's own defaults. It reaches Verilator as -G and this
+# harness as -D from the same two variables.
+#---------------------------------------------------------------------------
+
+set(BCMC_OUT_MAX_C 32)
+set(BCMC_OUT_IDX_W 16)
+
+add_executable(bcmc_out_engine_test bcmc_out_engine_test.cpp)
+target_link_libraries(bcmc_out_engine_test PRIVATE bcmc_sim_common)
+target_compile_definitions(bcmc_out_engine_test PRIVATE
+  BCMC_OUT_MAX_C=${BCMC_OUT_MAX_C}
+  BCMC_OUT_IDX_W=${BCMC_OUT_IDX_W})
+
+verilate(bcmc_out_engine_test
+  SOURCES ${BCMC_RTL}/bcmc_out_engine.v
+  TOP_MODULE bcmc_out_engine
+  PREFIX Vbcmc_out_engine
+  TRACE
+  VERILATOR_ARGS -Wall -GIDX_W=${BCMC_OUT_IDX_W} -GMAX_C=${BCMC_OUT_MAX_C})
+
+#---------------------------------------------------------------------------
 # sw/bcmc.c: the driver, against the peripheral
 #
 # The only target here that compiles software rather than hardware, and the
@@ -620,6 +653,17 @@ add_test(NAME observer_wb_trace
          COMMAND bcmc_obs_wb_test --limit 4
                  --vcd ${BCMC_WAVES}/bcmc_obs_wb.vcd
                  ${BCMC_VECTORS}/obswb_edge.txt)
+
+# The output engine, every cycle, against validation/output_engine.py's record.
+# `pins_o` is the whole observable contract, so this compares all of it -- there
+# is no partial comparison to be generous about.
+add_test(NAME out_engine_corpus
+         COMMAND bcmc_out_engine_test ${BCMC_VECTORS}/outeng_edge.txt)
+
+add_test(NAME out_engine_trace
+         COMMAND bcmc_out_engine_test --limit 3
+                 --vcd ${BCMC_WAVES}/bcmc_out_engine.vcd
+                 ${BCMC_VECTORS}/outeng_edge.txt)
 
 add_test(NAME context_trace
          COMMAND bcmc_context_test --limit 4
