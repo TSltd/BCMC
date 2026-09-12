@@ -137,6 +137,9 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 observer_periph.py ) || die "validation/observer_periph.py"
 ( cd validation && python3 test_observer_periph.py ) || die "validation/test_observer_periph.py"
 
+# The bus corpus the peripheral RTL is replayed against.
+( cd validation && python3 gen_observer_wb_vectors.py ) || die "gen_observer_wb_vectors.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
