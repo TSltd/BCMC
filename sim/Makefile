@@ -71,17 +71,19 @@ RTL_tb_wb      := $(RTLDIR)/bcmc_wb.v $(RTLDIR)/bcmc_context.v \
 # the cell come with it. There is no Core and no context here: the observer
 # holds a cursor, and the matrix is the projection's business, not its own.
 RTL_tb_observer := $(RTLDIR)/bcmc_observer.v $(RTLDIR)/bcmc_column.v \
-                   $(RTLDIR)/bcmc_cell.v
+                   $(RTLDIR)/bcmc_cell.v $(RTLDIR)/bcmc_src_identity.v
 
 # The register window is the slave, so the engine, the projection and the
 # cell all come with it; nothing above it is under test here.
 RTL_tb_observer_wb_smoke := $(RTLDIR)/bcmc_obs_wb.v $(RTLDIR)/bcmc_observer.v \
-                            $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v
+                            $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v \
+                            $(RTLDIR)/bcmc_src_identity.v
 
 # The same device as the smoke bench, replayed against the conformance corpus
 # instead of a hand-written sequence. Same list, because it is the same block.
 RTL_tb_observer_wb := $(RTLDIR)/bcmc_obs_wb.v $(RTLDIR)/bcmc_observer.v \
-                      $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v
+                      $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v \
+                      $(RTLDIR)/bcmc_src_identity.v
 
 # The output engine: one module, no submodules. It consumes the sideband and
 # drives pins, and there is nothing else in it to need.

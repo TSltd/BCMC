@@ -322,6 +322,7 @@ target_compile_definitions(bcmc_obs_wb_test PRIVATE
 verilate(bcmc_obs_wb_test
   SOURCES ${BCMC_RTL}/bcmc_obs_wb.v
           ${BCMC_RTL}/bcmc_observer.v
+          ${BCMC_RTL}/bcmc_src_identity.v
           ${BCMC_RTL}/bcmc_column.v
           ${BCMC_RTL}/bcmc_cell.v
   TOP_MODULE bcmc_obs_wb

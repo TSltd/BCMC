@@ -136,21 +136,33 @@ struct Dut {
     // The clock is held low while a cycle is observed: the registers are
     // stable, the combinational outputs have settled, and the rising edge that
     // consumes the inputs has not happened yet.
-    void settle() { t.eval(); }
+    // v2.0c: the engine no longer computes the traversal -- it asks a source
+    // through the seam, `ts_t` out and `ts_pi` in. This harness drives the engine
+    // as its top, and a C++ harness cannot instantiate a second Verilog module,
+    // so the identity is supplied here, one line before every evaluation. The
+    // Icarus bench instantiates the real `bcmc_src_identity` module instead,
+    // which is the stronger of the two; this is the mechanical half.
+    void seam() { t.ts_pi = t.ts_t; }
+
+    void settle() { seam(); t.eval(); }
 
     void edge() {
+        seam();
         t.clk = 1;
         t.eval();
+        seam();
         t.clk = 0;
         t.eval();
     }
 
     void reset() {
         t.rst = 1;
+        seam();
         t.eval();
         edge();
         edge();
         t.rst = 0;
+        seam();
         t.eval();
     }
 };

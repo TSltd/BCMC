@@ -137,6 +137,27 @@ module bcmc_obs_wb #(
     reg  [31:0] pass_q;
     reg         eng_aborted_q;     // for detecting the engine's abort edges
 
+    //-----------------------------------------------------------------------
+    // The traversal seam (v2.0c, section 8.2)
+    //
+    // The engine no longer computes the traversal; it asks a source about the
+    // step it is about to present. v2.0a's control case is the identity, wired
+    // here as a REAL instance so the regression exercises the module rather than
+    // a copy of it. Section 8.3 has this become the selector and the mux over
+    // three sources -- which is precisely why the source lives here and not in
+    // the engine.
+    //-----------------------------------------------------------------------
+
+    wire [VAL_W-1:0] seam_t;
+    wire [VAL_W-1:0] seam_pi;
+
+    bcmc_src_identity #(
+        .VAL_W (VAL_W)
+    ) u_seam_identity (
+        .ts_t  (seam_t),
+        .ts_pi (seam_pi)
+    );
+
     bcmc_observer #(
         .VAL_W (VAL_W),
         .IDX_W (IDX_W),
@@ -157,7 +178,9 @@ module bcmc_obs_wb #(
         .column_bits  (column_bits_o),
         .done         (eng_done),
         .running      (eng_running),
-        .aborted      (eng_aborted)
+        .aborted      (eng_aborted),
+        .ts_t         (seam_t),
+        .ts_pi        (seam_pi)
     );
 
     assign visit_valid_o = eng_visit_valid;

@@ -84,7 +84,11 @@ module bcmc_observer #(
     output wire [MAX_C-1:0]       column_bits,  // M(:, column), combinational
     output wire                   done,         // one cycle, with the last visit
     output wire                   running,      // a pass is in progress
-    output wire                   aborted       // sticky: restart required
+    output wire                   aborted,      // sticky: restart required
+
+    //--- the traversal seam (v2.0c, section 8.2) ----------------------------
+    output wire [VAL_W-1:0]       ts_t,         // the step being asked about
+    input  wire [VAL_W-1:0]       ts_pi          // pi(ts_t), from the source
 );
 
     localparam STATE_IDLE = 1'b0;
@@ -111,15 +115,23 @@ module bcmc_observer #(
         last_now ? {VAL_W{1'b0}} : (t_q + {{(VAL_W-1){1'b0}}, 1'b1});
 
     //-----------------------------------------------------------------------
-    // The traversal source behind the seam (section 3.3)
+    // The seam (v2.0c, section 8.2)
     //
-    // v2.0a instantiates the identity and nothing else, so the column for step
-    // t is t itself and pi(0) is 0. A v2.0c source replaces these two
-    // expressions with an affine map or a table read; the state machine, the
-    // timing and the contracts are untouched by that.
+    // The traversal is no longer computed here. The engine asks a source about
+    // the step it is about to present and stores the answer -- one ask in, one
+    // answer out, both combinational, and no source-side timing in the path.
+    //
+    // `ts_t` is 0 while IDLE and `t_next` otherwise. NOT simply `t_next`: a pass
+    // that starts after another has ended asks about step 0 while its cursor is
+    // already at step 0, and driving `t_next` there would ask about step 1.
+    //
+    // Driving 0 in IDLE is also what lets ONE expression replace TWO. At a start
+    // the source answers step 0 by definition, so the old `pi_at_start` path is
+    // gone; and at a wrap `t_next` is 0, so the same expression covers the pass
+    // boundary. Both used to be special cases here.
     //-----------------------------------------------------------------------
 
-    wire [VAL_W-1:0] pi_at_start = {VAL_W{1'b0}};   // pi(0), the identity
+    assign ts_t = (state_q == STATE_IDLE) ? {VAL_W{1'b0}} : t_next;
 
     //-----------------------------------------------------------------------
     // Combinational outputs (sections 3.6 - 3.8)
@@ -154,7 +166,7 @@ module bcmc_observer #(
             if (start && valid && (N != {VAL_W{1'b0}})) begin
                 state_q   <= STATE_RUN;
                 t_q       <= {VAL_W{1'b0}};
-                col_q     <= pi_at_start;
+                col_q     <= ts_pi;
                 visit_q   <= 1'b1;
                 aborted_q <= 1'b0;      // a restart acknowledges an abort
             end else begin
@@ -169,7 +181,7 @@ module bcmc_observer #(
                 visit_q <= 1'b0;
             end else if (trigger) begin
                 t_q     <= t_next;
-                col_q   <= t_next;      // identity source: pi(t_next) = t_next
+                col_q   <= ts_pi;       // the source's answer for t_next
                 visit_q <= 1'b1;
             end else begin
                 visit_q <= 1'b0;        // the strobe is one cycle wide
@@ -248,11 +260,15 @@ module bcmc_observer #(
                 $display("bcmc_observer: ERROR visit_valid while IDLE");
                 $stop;
             end
-            // The identity source: in RUN the presented column is the cursor.
-            // This is the one line a v2.0c source will legitimately change.
-            if (state_q == STATE_RUN && col_q !== t_q) begin
-                $display("bcmc_observer: ERROR column %0d != cursor %0d (identity)",
-                         col_q, t_q);
+            // v2.0c: this is `col_q == ts_pi`, the invariant that holds for EVERY
+            // source. `col_q == t_q` was its identity-specific corollary, true
+            // only because the identity is what v2.0a wires to the seam -- so the
+            // check is generalised here, not deleted. Nothing moves into the
+            // source: a module that cannot see a cursor, a clock or a column
+            // cannot assert anything about one.
+            if (state_q == STATE_RUN && col_q !== ts_pi) begin
+                $display("bcmc_observer: ERROR column %0d != ts_pi %0d",
+                         col_q, ts_pi);
                 $stop;
             end
         end

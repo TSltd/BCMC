@@ -60,6 +60,21 @@ module tb_observer;
     wire                  aborted;
     wire [MAX_C-1:0]      column_bits;
 
+    // v2.0c: the traversal seam. The engine asks a source about the step it is
+    // about to present; v2.0a's control case is the identity, instantiated here
+    // as the real module rather than a copy of it. The bench is otherwise
+    // unchanged -- the corpus, the checks and the expected values are the ones
+    // from before the seam existed, which is the point of this regression.
+    wire [VAL_W-1:0] seam_t;
+    wire [VAL_W-1:0] seam_pi;
+
+    bcmc_src_identity #(
+        .VAL_W (VAL_W)
+    ) seam_src (
+        .ts_t  (seam_t),
+        .ts_pi (seam_pi)
+    );
+
     bcmc_observer #(
         .VAL_W (VAL_W),
         .IDX_W (IDX_W),
@@ -80,7 +95,9 @@ module tb_observer;
         .column_bits  (column_bits),
         .done         (done),
         .running      (running),
-        .aborted      (aborted)
+        .aborted      (aborted),
+        .ts_t         (seam_t),
+        .ts_pi        (seam_pi)
     );
 
     //-----------------------------------------------------------------------
