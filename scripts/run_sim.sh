@@ -145,6 +145,13 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 gen_observer_wb_vectors.py ) || die "gen_observer_wb_vectors.py"
 ( cd validation && python3 replay_observer_wb.py ) || die "replay_observer_wb.py"
 
+# The v2.0b output engine: its cycle model and the suite that exists to falsify
+# docs/Output_Engine.md. The suite is the point -- the model is a faithful
+# restatement of the document, and what has to be checked is whether the document
+# survives being restated.
+( cd validation && python3 output_engine.py ) || die "validation/output_engine.py"
+( cd validation && python3 test_output_engine.py ) || die "validation/test_output_engine.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
