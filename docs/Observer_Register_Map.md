@@ -7,6 +7,20 @@ sequences that must fail have been executed by `validation/observer_periph.py`
 and attacked by `validation/test_observer_periph.py`. No v2.0a change to them
 without a discovered defect or an explicit revision of this contract.
 
+**v2.0c extends the map, and one extension is a version boundary.** v2.0c adds a
+traversal-source selector, `OBS_SEED`, `OBS_A`, `OBS_B`, and two `OBS_STATUS`
+bits. The new registers are placed at `0x020`–`0x028` deliberately, so that every
+address the frozen v2.0a corpus probes as unmapped stays unmapped. The one
+observable change to an *existing* register is `OBS_STATUS`: bits 3 and 4 were
+reserved and read `0`, and now carry `SEED_READY` and `SEED_UNDERRUN`. Because
+that changes the meaning of a register the v2.0a corpus already reads, the v2.0a
+corpus is a **specification-version boundary**, not replayable evidence of this
+contract. The reasoning, the two rejected alternatives, and the proof obligation
+that replaces bit-for-bit replay are in
+`docs/Traversal_Sources_Specification.md` §8.4 item 10 (finding 27). Sections 5
+to 7 below are the v2.0c contract; `sim/vectors/obswb_edge.txt` stays
+byte-identical and continues to mean what it meant when it was frozen.
+
 `docs/Register_Map.md` is the contract that `validation/bcmc_periph.py` and
 `rtl/bcmc_wb.v` must satisfy. This file plays the same role for the observer's
 own control window, one level up:
@@ -169,14 +183,21 @@ differently will see the difference rather than be told a comfortable lie.
 | `0x000`         | `OBS_ID`      | RO     | 32    | `0x4F425356`, the ASCII bytes `OBSV`              |
 | `0x004`         | `OBS_VERSION` | RO     | 32    | major, minor, patch                              |
 | `0x008`         | `OBS_CAPS`    | RO     | 32    | `IDX_W`, `VAL_W`, `MAX_C`                        |
-| `0x00C`         | `OBS_CTRL`    | RW     | 32    | `START`, `STEP`, `RESET` (all W1S), `ONESHOT`     |
-| `0x010`         | `OBS_STATUS`  | RW     | 32    | `RUNNING` (RO), `DONE`, `ABORTED` (RW1C)         |
+| `0x00C`         | `OBS_CTRL`    | RW     | 32    | `START`, `STEP`, `RESET` (W1S), `ONESHOT`, `SELECT` |
+| `0x010`         | `OBS_STATUS`  | RW     | 32    | `RUNNING` (RO), `DONE`, `ABORTED`, `SEED_READY`, `SEED_UNDERRUN` (RW1C) |
 | `0x014`         | `OBS_PASS`    | RO     | 32    | completed-pass counter                           |
 | `0x018`         | `OBS_TRIG`    | RO     | 32    | advertised trigger sources                       |
-| `0x01C`–`0x3FF` | —             | —      | —     | unmapped (E1)                                    |
+| `0x01C`         | —             | —      | —     | unmapped (E1); the frozen corpus probes it so     |
+| `0x020`         | `OBS_SEED`    | RW     | 32    | the source's 32-bit seed (v2.0c)                  |
+| `0x024`         | `OBS_A`       | RO     | 32    | the affine's `a`, or `0` before it is derived (v2.0c) |
+| `0x028`         | `OBS_B`       | RO     | 32    | the affine's `b`, or `0` before it is derived (v2.0c) |
+| `0x02C`–`0x3FF` | —             | —      | —     | unmapped (E1)                                    |
 
 Reserved bits of any register read `0`, and writes to them are ignored — field
-width doing its job, deliberately not an E-condition.
+width doing its job, deliberately not an E-condition. `SELECT` is the exception
+that is not a violation of that rule: bits `5:4` were reserved in v2.0a and v2.0c
+gives them a meaning, which is exactly the kind of change finding 27 says has to
+be declared rather than absorbed.
 
 ---
 
@@ -200,9 +221,20 @@ the wrong state; that silence is right for a wire and wrong for a bus. So the
 window turns it into an error, by the engine's own acceptance rule:
 
 ```text
-START is refused unless   !RUNNING  &  VALID  &  N >= 1     (section 3.4)
-STEP  is refused unless    RUNNING                          (section 3.5)
+START is refused unless   !RUNNING  &  VALID  &  N >= 1  &  SEED_READY   (3.4, 7.2)
+STEP  is refused unless    RUNNING                                        (3.5)
 ```
+
+**v2.0c adds one conjunct and three refusals, and still no new error class.**
+`SEED_READY` joins `START`'s condition because a `START` the selected source cannot
+serve is a `START` the engine would ignore — the same derivation as the rest of
+E4, one level up. A write to `OBS_SEED`, or a `SELECT` that changes the selection,
+is refused while `RUNNING`: it would invalidate a pass in flight, which is
+`START`'s own reason restated. Both are **E4**. A write to `OBS_A`/`OBS_B` is
+**E2**, like any other read-only register. A `SELECT` of `3` names no source, which
+is **E1** — the field decodes like an address, and `3` is not one that exists.
+`docs/Traversal_Sources_Specification.md` §6.5 holds the table this paragraph
+mirrors; neither is a new class, and that is the point.
 
 This mirrors the BCMC map's E4, which refuses a `COLUMN` read while `!VALID`: the
 hardware would not answer meaningfully, so the bus says so rather than
@@ -258,7 +290,8 @@ The same encoding as the BCMC peripheral's `CAPS`, so one parser reads both.
 
 | Bits   | Field     | Access | Meaning                                                      |
 | ------ | --------- | ------ | ------------------------------------------------------------ |
-| `31:4` | —         | —      | reserved                                                     |
+| `31:6` | —         | —      | reserved                                                     |
+| `5:4`  | `SELECT`  | RW     | which source the window muxes: `0` identity, `1` affine, `2` shuffled; `3` is E1 (v2.0c) |
 | `3`    | `ONESHOT` | RW     | mirrors the engine's `oneshot` input (section 3.8)            |
 | `2`    | `RESET`   | W1S    | pulses the engine's `rst` (section 3.9); reads `0`            |
 | `1`    | `STEP`    | W1S    | the software trigger source's pulse (section 3.5); reads `0`  |
@@ -266,7 +299,19 @@ The same encoding as the BCMC peripheral's `CAPS`, so one parser reads both.
 
 Each field reaches exactly one frozen engine input. The three W1S bits
 self-clear and have no readable value; writing `0` does nothing. A read returns
-`ONESHOT`, with the other three reading `0`.
+`SELECT` above `ONESHOT`, with the other three reading `0`.
+
+**`SELECT` muxes two wires and clocks nothing.** The muxed wires are the source's
+`ts_pi` and its `ready`; nothing else. All three sources are instantiated and
+clocked whether selected or not, and an unselected source keeps its own state —
+which is why a pass on the affine does not disturb a shuffled fill, and why the
+mux adds no cycle. **A write loads the sources only if the selection actually
+changes.** That matters because every `STEP` carries the whole `OBS_CTRL` word: if
+re-stating the current selection loaded, it would discard a filled bank and stall
+the stream. A write to `OBS_SEED` is the opposite case and always loads, because
+the seed is opaque and "the same value" is not this window's call. A change in the
+context's `N` also loads — see `docs/Traversal_Sources_Specification.md` §8.4
+item 3, and finding 26 for why it is not optional.
 
 **Why `RESET` is here and `EN` is not.** The engine has a `rst` input and no
 enable, so the window exposes the first and would have had to invent the second.
@@ -280,10 +325,12 @@ continuous one uses `RESET`.
 
 ### `OBS_STATUS` — `0x010`, RW
 
-| Bits   | Field     | Access | Reset | Meaning                                    |
-| ------ | --------- | ------ | ----- | ------------------------------------------ |
-| `31:3` | —         | —      | `0`   | reserved                                   |
-| `2`    | `ABORTED` | RW1C   | `0`   | a pass was cut short by an invalid context  |
+| Bits   | Field           | Access | Reset | Meaning                                    |
+| ------ | --------------- | ------ | ----- | ------------------------------------------ |
+| `31:5` | —               | —      | `0`   | reserved                                   |
+| `4`    | `SEED_UNDERRUN` | RW1C   | `0`   | a shuffled bank was missed somewhere (v2.0c) |
+| `3`    | `SEED_READY`    | RW1C   | `0`   | the selected source can serve a pass (v2.0c) |
+| `2`    | `ABORTED`       | RW1C   | `0`   | a pass was cut short by an invalid context  |
 | `1`    | `DONE`    | RW1C   | `0`   | a pass completed; write `1` to clear        |
 | `0`    | `RUNNING` | RO     | `0`   | the engine's `running` output               |
 
@@ -301,6 +348,21 @@ map gives about its own `done`: a pulse is invisible to software that polls.
 "a pass is in flight" from "a pass ended", and `ABORTED` to tell *how* it ended —
 the three endings of section 3.10, each visible in exactly one bit combination.
 
+`SEED_READY` is the **selected** source's readiness, muxed with its `ts_pi`
+(section 7.1 of the sources specification). It gates `START` for every source and
+not only the buffered one, because a pass the source cannot serve is one the
+engine would ignore. It clears on a write to `OBS_SEED`, on a change of `SELECT`,
+and on a change in `N`, and sets again when the source rebuilds.
+
+`SEED_UNDERRUN` reports that a shuffled bank was missed **somewhere**: it is the OR
+of all three sources' diagnostic levels, reported rather than attributed, and it
+refuses nothing — it is a diagnostic by decision, not a stall.
+
+Both are RW1C but **backed by a level**, so clearing while the level is still high
+re-asserts on the next cycle. That is what a level-backed sticky bit must do, and
+it is why the sources carry levels while the stickiness lives here. Like `DONE`
+and `ABORTED` they are cleared by `RESET`.
+
 ### `OBS_PASS` — `0x014`, RO
 
 A 32-bit count of completed passes, incremented on every `done` and cleared by
@@ -309,6 +371,26 @@ A 32-bit count of completed passes, incremented on every `done` and cleared by
 ### `OBS_TRIG` — `0x018`, RO
 
 The advertised trigger sources, as described in section 4. `0x1` in v2.0a.
+
+### `OBS_SEED` — `0x020`, RW (v2.0c)
+
+The traversal source's 32-bit seed. A write loads every instantiated source, even
+when the value is unchanged, and is refused while `RUNNING` (**E4**). It exists as
+a register rather than a field so that a write is observable as a write: a source
+derives from a seed *transition*, not from a seed *value*.
+
+### `OBS_A` — `0x024`, RO (v2.0c)
+
+### `OBS_B` — `0x028`, RO (v2.0c)
+
+The affine source's `a` and `b`, readable **regardless of the selector**, and
+reading `0` until the derivation completes. They make the construction of
+`rtl/bcmc_src_affine.v` inspectable without simulating the device. Gating them on
+the selector would make them useless exactly when a driver is deciding whether to
+select the affine, so for selectors `0` and `2` they read a derivation that is not
+meaningful for that pass — said plainly rather than promised. Reading `0` means
+"not derived yet", which is how a driver tells absence from a real `a`. Writing
+either is **E2**.
 
 ---
 
