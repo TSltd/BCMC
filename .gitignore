@@ -25,3 +25,6 @@ fpga/*/build/
 # Other
 
 notes/
+
+# Local editor configuration, not project content
+.vscode/

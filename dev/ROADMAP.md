@@ -152,21 +152,35 @@ v2.0  -- Hardware Observers
     docs/Hardware_Observer_Architecture.md.
 
     ├── v2.0a  the sequential observer engine
-    │   ├── Specification, frozen      docs/Hardware_Observer_Architecture.md
-    │   ├── The cycle model      [done]  validation/observer_hw.py
-    │   ├── The engine and its FSM [done] rtl/bcmc_observer.v
-    │   ├── Observation sideband   [done] N, C, VALID, weights_flat, offsets_flat
-    │   ├── Traversal-source seam  [done] the identity source only
-    │   ├── Zero bus per visit     [done] proved by metering, not asserted
-    │   ├── Verilator harness      [done] sim/bcmc_observer_hw_test.cpp
-    │   ├── Icarus testbench       [done] sim/tb_observer.v
-    │   ├── Register window, spec  [done] docs/Observer_Register_Map.md
-    │   ├── O/P conformance line   [done] section 7.8: engine vs contract
-    │   ├── Register window, model       validation/observer_periph.py
-    │   └── Register window, decode      rtl/bcmc_obs_wb.v
+    │   ├── Specification, frozen       docs/Hardware_Observer_Architecture.md
+    │   ├── The cycle model       [done] validation/observer_hw.py
+    │   ├── The engine and its FSM[done] rtl/bcmc_observer.v
+    │   ├── Observation sideband  [done] N, C, VALID, weights_flat, offsets_flat
+    │   ├── Traversal-source seam [done] the identity source only
+    │   ├── Zero bus per visit    [done] proved by metering, not asserted
+    │   ├── Verilator harness     [done] sim/bcmc_observer_hw_test.cpp
+    │   ├── Icarus testbench      [done] sim/tb_observer.v
+    │   └── Tagged                      v2.0a  221f976
+    ├── v2.0a-periph  the observer's register window
+    │   ├── Register window, spec [done] docs/Observer_Register_Map.md
+    │   ├── O/P conformance line  [done] section 7.8: engine vs contract
+    │   ├── Register window, model[done] validation/observer_periph.py
+    │   ├── Adversarial suite     [done] validation/test_observer_periph.py
+    │   ├── Bus corpus, + guard   [done] validation/gen_observer_wb_vectors.py
+    │   ├── Model replay          [done] validation/replay_observer_wb.py
+    │   ├── Register window, RTL  [done] rtl/bcmc_obs_wb.v
+    │   ├── Verilator differential[done] sim/bcmc_obs_wb_test.cpp
+    │   ├── Icarus second opinion [done] sim/tb_observer_wb.v
+    │   ├── Smoke sequence        [done] sim/tb_observer_wb_smoke.v
+    │   └── Tagged                      v2.0a-periph  587933d
     ├── v2.0b  the output engine
-    │   ├── column_bits -> pins        rtl/bcmc_out_engine.v
-    │   └── A pure consumer            no traversal, no mathematics
+    │   ├── Specification               docs/Output_Engine.md  (not frozen)
+    │   ├── The falsifying model        validation/output_engine.py
+    │   ├── Its obligations as tests    validation/test_output_engine.py
+    │   ├── column_bits -> pins         rtl/bcmc_out_engine.v
+    │   ├── Verilator differential      sim/bcmc_out_engine_test.cpp
+    │   ├── Icarus second opinion       sim/tb_out_engine.v
+    │   └── A pure consumer             no traversal, no mathematics
     ├── v2.0c  traversal sources
     │   ├── The seam, filled           identity, affine, shuffled
     │   ├── Affine, streaming          pi(t) = (a t + b) mod N, gcd(a, N) = 1

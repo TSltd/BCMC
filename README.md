@@ -43,7 +43,8 @@ The long-term goal is to establish BCMC as a reusable hardware primitive for det
 
 # Project Status
 
-**Current release:** **v0.5c**
+**Current release:** **v2.0a-periph** (the observer stream); the latest v0.x
+release is **v0.5c**
 
 ✔ Mathematical specification complete
 
@@ -92,8 +93,9 @@ scheduler and a mains heater controller — each runnable over either reference
 traversal, from three source files rather than six, all against the real
 verilated peripheral and never a software model of it
 
-⏳ Hardware observer next (v2.0a); the Tang Nano 20K demonstration is deferred
-to v1.0
+✔ Hardware observer engine and its register window complete and independently
+verified (`v2.0a`, `v2.0a-periph`); the output engine (`v2.0b`) is specified and
+its falsifying model is next. The Tang Nano 20K demonstration is deferred to v1.0
 
 ---
 
@@ -209,6 +211,7 @@ optionally a second C compiler, Icarus Verilog and gtkwave.
 | `docs/Hardware_Observer.md`           | The hardware observer: architecture outline                     |
 | `docs/Hardware_Observer_Architecture.md` | v2.0a: the engine's specification and cycle contract         |
 | `docs/Observer_Register_Map.md`       | The observer's own register window                              |
+| `docs/Output_Engine.md`               | v2.0b: the output engine's specification                        |
 | `examples/README.md`                  | `Application × Traversal`, and why it is a product              |
 | `docs/Motivation_and_Applications.md` | Motivation, design philosophy and applications                  |
 | `docs/Why_BCMC.md`                    | Why would I use BCMC?                                           |
@@ -454,12 +457,17 @@ the constructor it consumes, so that software is asked only for what it alone
 can supply: the weights. See `docs/Hardware_Observer.md` for the architecture,
 and `docs/Hardware_Observer_Architecture.md` for the v2.0a specification.
 
-- **v2.0a — Sequential observer engine.** The engine and its state machine, the
+- **v2.0a — Sequential observer engine.** ✔ The engine and its state machine, the
   observation sideband (`N`, `C`, `VALID`, the flat windows), the traversal-source
-  seam, and a pass whose every visit costs zero bus accesses. The engine's own
-  register window is specified in `docs/Observer_Register_Map.md`.
+  seam, and a pass whose every visit costs zero bus accesses. Tagged `v2.0a`.
+- **v2.0a-periph — the observer's register window.** ✔ Specified in
+  `docs/Observer_Register_Map.md` and implemented as a Wishbone slave: a golden
+  model that composes the engine, an adversarial suite, one fixed bus corpus, and
+  two independent replays of it — Verilator against the model, Icarus for a
+  second opinion. Tagged `v2.0a-periph`.
 - **v2.0b — The output engine.** `column_bits` turned into pins: a pure consumer
-  with no traversal and no mathematics.
+  with no traversal and no mathematics. Specified in `docs/Output_Engine.md`; the
+  falsifying model is next, and no RTL precedes it.
 - **v2.0c — Traversal sources.** The seam filled: the identity source, a
   streaming affine source, and a buffered seeded Fisher–Yates source with its
   fill bound made explicit.
