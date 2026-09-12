@@ -21,6 +21,9 @@
 #                    #   the smoke sequence, then the conformance corpus
 #     make out_engine  # just bcmc_out_engine (the output engine, on the pins)
 #     make src_affine  # just bcmc_src_affine (the affine traversal source)
+#     make src_shuffled  # just bcmc_src_shuffled (the buffered shuffled source)
+#     make shuffle_isolation  # the bank-isolation negative control: builds a
+#                    #   mutated source that MUST fail, and fails if it passes
 #     make soak     # the optional big files from gen_vectors.py --big
 #     make waves    # run one small file per testbench and dump waves/*.vcd
 #     make gtkwave  # ... and open the core trace
@@ -41,7 +44,8 @@ BUILDDIR := build-icarus
 # and the vector files it must pass. Adding a module means adding a stanza,
 # not editing the rules.
 TOPS       := tb_core tb_cell tb_row tb_column tb_context tb_wb tb_observer \
-              tb_observer_wb_smoke tb_observer_wb tb_out_engine tb_src_affine
+              tb_observer_wb_smoke tb_observer_wb tb_out_engine tb_src_affine \
+              tb_src_shuffled
 
 # bcmc_row and bcmc_column are replication of bcmc_cell, and their testbenches
 # instantiate a SECOND, separate cell to prove it, so the cell is in both lists.
@@ -86,6 +90,10 @@ RTL_tb_out_engine := $(RTLDIR)/bcmc_out_engine.v
 # The affine source: one module, and it needs no submodule -- no multiplier, no
 # divider, and no bcmc_cell. The accumulator and the Euclid are its own.
 RTL_tb_src_affine := $(RTLDIR)/bcmc_src_affine.v
+
+# The shuffled source: one module, and it holds the bank itself. No bcmc_cell and
+# no bcmc_column -- a bank is a permutation, not a matrix projection.
+RTL_tb_src_shuffled := $(RTLDIR)/bcmc_src_shuffled.v
 
 VEC_tb_core    := vectors/core_edge.txt \
                   vectors/core_random.txt \
@@ -144,6 +152,12 @@ VEC_tb_out_engine := vectors/outeng_edge.txt
 # the derivation: the bench polls `ready` instead of counting to it.
 VEC_tb_src_affine := vectors/srcaff_edge.txt
 
+# The shuffled source's corpus, from gen_src_shuffled_vectors.py. A script too,
+# and for the same reason; it records the *bank stream* rather than a permutation
+# per pass, so the bench derives which bank each pass received from what it
+# observes instead of from when a fill finished.
+VEC_tb_src_shuffled := vectors/srcshuf_edge.txt
+
 # Which generator makes each testbench's vectors, so that a missing file can
 # say how to produce it rather than merely that it is absent.
 GEN_tb_core    := gen_vectors.py
@@ -157,6 +171,7 @@ GEN_tb_observer_wb_smoke := gen_observer_hw_vectors.py
 GEN_tb_observer_wb := gen_observer_wb_vectors.py
 GEN_tb_out_engine := gen_out_engine_vectors.py
 GEN_tb_src_affine := gen_src_affine_vectors.py
+GEN_tb_src_shuffled := gen_src_shuffled_vectors.py
 
 SOAK_MATRIX    := vectors/matrix_exhaustive_6.txt \
                   vectors/matrix_random_5k.txt
@@ -172,6 +187,7 @@ SOAK_tb_observer_wb_smoke :=
 SOAK_tb_observer_wb :=
 SOAK_tb_out_engine :=
 SOAK_tb_src_affine :=
+SOAK_tb_src_shuffled :=
 
 WAVE_tb_core    := vectors/core_edge.txt
 WAVE_tb_cell    := vectors/cell_edge.txt
@@ -184,6 +200,7 @@ WAVE_tb_observer_wb_smoke := vectors/obshw_edge.txt
 WAVE_tb_observer_wb := vectors/obswb_edge.txt
 WAVE_tb_out_engine := vectors/outeng_edge.txt
 WAVE_tb_src_affine := vectors/srcaff_edge.txt
+WAVE_tb_src_shuffled := vectors/srcshuf_edge.txt
 
 # tb_cell holds a whole suite in memory so that it can replay it in three
 # different orders. The array size is a compile time choice in Verilog-2005,
@@ -192,13 +209,20 @@ DEFS_tb_cell      :=
 SOAKDEFS_tb_cell  := -DMAXCASE=400000
 
 .PHONY: all test core cell row column context wb observer observer_wb \
-        out_engine src_affine soak waves gtkwave vectors clean
+        out_engine src_affine src_shuffled shuffle_isolation soak waves \
+        gtkwave vectors clean
 
 all: test
 
 test: core cell row column context wb observer observer_wb out_engine \
-      src_affine
+      src_affine src_shuffled
 	@echo "ICARUS: PASS"
+
+# The negative control for the shuffled source's bank-isolation invariant. It is
+# not in `test`, because it deliberately builds a module that MUST fail; it exits
+# non-zero if the mutation survives. See scripts/mutate_bank_isolation.sh.
+shuffle_isolation:
+	@../scripts/mutate_bank_isolation.sh
 
 $(BUILDDIR):
 	@mkdir -p $(BUILDDIR)
@@ -288,6 +312,8 @@ observer_wb: run-tb_observer_wb_smoke run-tb_observer_wb
 out_engine: run-tb_out_engine
 
 src_affine: run-tb_src_affine
+
+src_shuffled: run-tb_src_shuffled
 
 soak: $(addprefix soak-,$(TOPS))
 

@@ -171,6 +171,19 @@ step "6/12  the hardware observer engine satisfies its specification"
 # step 0, or a VAL_W-bit sum apart from the real thing.
 ( cd validation && python3 gen_src_affine_vectors.py ) || die "gen_src_affine_vectors.py"
 
+# The shuffled source's corpus. It records the *bank stream* rather than one
+# permutation per pass, because which bank a pass receives depends on whether the
+# fill finished and section 5.4 promises no cycle count for a fill: the bench
+# derives the mapping from what it observes and requires the underrun flag to
+# agree with it.
+( cd validation && python3 gen_src_shuffled_vectors.py ) || die "gen_src_shuffled_vectors.py"
+
+# Section 5.5's invariant has no mathematical check -- a half-advanced in-place
+# shuffle is still a permutation -- so the module carries a structural assertion
+# and it has to be shown to work. This builds a mutated source in which a shuffle
+# write addresses the bank being read, and fails if that mutation survives.
+../scripts/mutate_bank_isolation.sh || die "mutate_bank_isolation.sh"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
