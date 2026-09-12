@@ -293,70 +293,88 @@ int run_shuffled(const std::string& path) {
             for (long long i = 0; i < dec(r, 1); i++) clk();
 
             const long long gap = dec(r, 2);
-            // The verdict is decided ONLY by the asks that carry information: an
-            // ask where the two candidate banks hold the same value cannot say
-            // which bank was read. Counting "did any ask match the new bank" is
-            // too crude -- when a repeat's two candidates coincide at some
-            // position, that ask matches the new bank too, so a plain flag reports
-            // "matched both banks" for a pass that is simply a repeat.
-            long long info_new = 0, info_rep = 0;
+            // Collect the pass, then identify WHICH BANK it was by matching the
+            // whole pass against each bank the corpus names.
+            //
+            // Per-ask flags cannot answer this. An ask where two candidates hold
+            // the same value matches both, so "did any ask match the new bank"
+            // reports a repeat as a new bank; and an ask where they differ speaks
+            // only for that one position, so a stray agreement anywhere makes a
+            // repeat look like a new bank. Matching all N positions at once is
+            // unambiguous, and it can also say which bank was read when the
+            // answer is wrong.
+            std::vector<long long> seen;
+            seen.reserve(static_cast<std::size_t>(N));
             for (long long t = 0; t < N; t++) {
                 dut.ts_t = static_cast<IData>(t & 0xFFFF);
                 for (long long g = 0; g < gap; g++) {
                     dut.eval();
                     asks++;
-                    const long long got = dut.ts_pi & 0xFFFF;
                     if (!dut.ready) fail(where, "ready low during a pass");
-                    if (cur < 0) {
-                        check_eq(where, "the first pass is not bank 0", got,
-                                 banks[0][t]);
-                    } else if ((cur + 1) >=
-                               static_cast<long long>(banks.size())) {
-                        // The last bank the corpus names: only a repeat is
-                        // possible, so this ask is informative by construction.
-                        info_rep++;
-                        if (got != banks[cur][t])
-                            fail(where, "ts_pi is not the repeated bank");
-                    } else if (banks[cur + 1][t] == banks[cur][t]) {
-                        // Uninformative: both candidates are the same value.
-                        if (got != banks[cur][t])
-                            fail(where, "ts_pi matches neither candidate, which"
-                                        " are equal");
-                    } else if (got == banks[cur + 1][t]) {
-                        info_new++;
-                    } else if (got == banks[cur][t]) {
-                        info_rep++;
-                    } else {
-                        fail(where, "ts_pi is neither the new bank nor the"
-                                    " repeat");
+                    const long long v = dut.ts_pi & 0xFFFF;
+                    if (g == 0) {
+                        seen.push_back(v);
+                    } else if (v != seen.back()) {
+                        // The bank cannot change within one ask.
+                        fail(where, "ts_pi changed while one ask was held");
                     }
                     clk();
                 }
             }
 
-            // The verdict: which bank, and does the flag agree with it.
+            auto matches = [&](long long k) {
+                if (k < 0 || k >= static_cast<long long>(banks.size()))
+                    return false;
+                if (static_cast<long long>(banks[k].size()) < N) return false;
+                for (long long t = 0; t < N; t++) {
+                    if (banks[k][static_cast<std::size_t>(t)] !=
+                        seen[static_cast<std::size_t>(t)]) return false;
+                }
+                return true;
+            };
+
             if (cur < 0) {
+                if (!matches(0)) fail(where, "the first pass is not bank 0");
                 if (kind == 0 && dut.underrun)
                     fail(where, "the first pass reported an underrun");
                 cur = 0;
-            } else if (info_new && !info_rep) {
-                if (dut.underrun)
-                    fail(where, "a new bank was taken but underrun says"
-                                " otherwise");
-                cur++;
-            } else if (info_rep && !info_new) {
-                if (kind == 0) fail(where, "a repeat in a qualified run");
-                if (!dut.underrun)
-                    fail(where, "a repeat without underrun -- the flag must say"
-                                " so");
-            } else if (!info_new && !info_rep) {
-                // Every ask was uninformative: the two candidate banks coincide
-                // everywhere, so which one was read is not observable. N = 1 is
-                // the case that matters -- every bank is [0] -- and its asks were
-                // checked above regardless.
             } else {
-                fail(where, "the pass read one bank at some asks and the other at"
-                            " others");
+                const bool got_new = matches(cur + 1);
+                const bool got_rep = matches(cur);
+                if (got_new && !got_rep) {
+                    if (dut.underrun)
+                        fail(where, "a new bank was taken but underrun says"
+                                    " otherwise");
+                    cur++;
+                } else if (got_rep && !got_new) {
+                    if (kind == 0) fail(where, "a repeat in a qualified run");
+                    if (!dut.underrun)
+                        fail(where, "a repeat without underrun -- the flag must"
+                                    " say so");
+                } else if (got_rep && got_new) {
+                    // The two candidates are the same permutation, so which was
+                    // read is not observable. N = 1 is that case: every bank is
+                    // [0]. Its asks were still compared above.
+                } else {
+                    long long which = -1;
+                    for (std::size_t k = 0; k < banks.size(); k++) {
+                        if (matches(static_cast<long long>(k))) {
+                            which = static_cast<long long>(k);
+                            break;
+                        }
+                    }
+                    char why[128];
+                    if (which < 0) {
+                        std::snprintf(why, sizeof(why),
+                                      "the pass matched no bank the corpus"
+                                      " names");
+                    } else {
+                        std::snprintf(why, sizeof(why),
+                                      "the pass read bank %lld, expected %lld or"
+                                      " %lld", which, cur, cur + 1);
+                    }
+                    fail(where, why);
+                }
             }
 
         } else if (r.tag == "D") {
@@ -390,6 +408,11 @@ int run_shuffled(const std::string& path) {
             dut.ts_t = 0;
             dut.seed = static_cast<IData>(hex(r, 0) & 0xFFFFFFFFLL);
             dut.load = 1; clk(); dut.load = 0;
+            // The commit wrote a new seed, so the stream restarts: the next pass
+            // must read bank 0 again, and the cursor has to say so. Without this
+            // the pass after a load is judged against the pre-load cursor and a
+            // correct restart is reported as a repeat.
+            cur = -1;
 
         } else if (r.tag == "E") {
             dut.eval();
