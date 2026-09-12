@@ -1101,8 +1101,21 @@ arithmetic needs a level; the corpus wrote the seed in decimal while the bench r
 it as hex, which passed only for single-digit seeds; and a re-seed did not clear
 the boundary detector. Findings 20 to 25 are the specification's share of it.
 
-Then the two-port engine change of §8.2, whose obligation is the strictest in the
-phase: every v2.0a suite must pass *unchanged* afterwards.
+The two-port engine change of §8.2 — the strictest obligation in the phase — is
+**done and met**. `rtl/bcmc_observer.v` asks a source through the seam instead of
+computing the traversal, the identity is instantiated as the *real* module in the
+window and in the Icarus bench, and **every v2.0a suite passes unchanged, 50/50**,
+with no corpus file touched by the commit. That is the claim §1.1 was written to
+make checkable, and it held.
+
+The one qualification is the assertion correction §8.2 now records: `col_q == ts_pi`
+is *not* an invariant — the ask is latched an edge before the visit it produces —
+so the engine's local traversal check was superseded by the corpus rather than
+generalised.
+
+Still to do for v2.0c: the selector, the source mux, the `load` pulses and the
+readiness/diagnostic integration in `rtl/bcmc_obs_wb.v` (§8.3, §6.1), and their
+verification.
 
 The gap is worth naming plainly, because it is the one thing the suite cannot
 check: an in-place partial bank is invisible to O1, so **the "repeat a complete
