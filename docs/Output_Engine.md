@@ -15,6 +15,27 @@
 > `ONESHOT`-cleared-by-`STEP` trap. Every one of those was a defect in a
 > *document*, found by its model, before any RTL existed. Nothing in this file
 > should be treated as settled until the same has been attempted here.
+>
+> The same has now begun, and the record is kept the same way. **Writing
+> `validation/output_engine.py` was enough to falsify part of §10.2** — the claim
+> that every visit changes the pins, and the transition counts built on it — with
+> an embarrassingly simple counterexample: set every weight to zero, which is
+> legal for every `N`, and a three-visit pass produces three visits and no pin
+> transitions at all. Building the suite that would check the list found two more
+> defects: item 1's companion claim is *not checkable* (two visits can present the
+> same pattern, so the pins may legitimately arrive at the current bits), and
+> item 8's bound needs the gate and reset events in it, not just the visits. All
+> three corrections are in place above, and the model and its suite are green
+> against them: `validation/output_engine.py` (27 doctests) and
+> `validation/test_output_engine.py` (1,828 exhaustive runs and gaps, 1,724
+> patterns checked against the reference matrices, the composition rule, the port
+> list, and a mutation battery that catches three planted bugs by name while
+> accepting one correct alternative).
+>
+> What that does *not* yet establish: the model has not been held against an RTL,
+> because there is none. On this project's record, a specification is what a model
+> has failed to falsify *and* what an implementation has been held to. The first
+> is now true here; the second is not.
 
 ---
 
@@ -208,9 +229,17 @@ check, and it is the only thing `C` is for.
 > An **application event** is a change in the pattern presented on `pins_o`.
 
 Not a pulse, not a handshake, not a level on a status wire. The observable thing
-an application does is *change what is driven*, and it changes exactly once per
-visit. This definition is chosen because it is the one a meter can settle: count
-pin transitions, compare with the number of visits.
+an application does is *change what is driven*, and a visit is the only thing that
+can cause such a change: a visit whose pattern differs from the one already
+presented produces exactly one event, one clock later.
+
+**Not every visit produces an event**, and an earlier draft of this document said
+it did. Two consecutive visits may present the same pattern, and a visit may
+present an empty one: set every weight to zero — legal, since `0 <= w_i <= N` —
+and no visit changes anything at all. So "one event per visit" is false; what is
+true is the one-way implication of §10.2 item 7. This definition is still the one
+a meter can settle, but the meter is checked against the *value* on the pins
+(§10.2 item 1), not against a count.
 
 It follows immediately that `visit_valid` is **not** the application event. It is
 the event's *input*, by one clock (§4.2). Conflating the two is the first mistake
@@ -305,8 +334,8 @@ own timing contract was designed to make possible.
 
 `visit_valid` is high for exactly one cycle per visit. The pattern is latched at
 the edge that ends that cycle, so the pins carry the pattern from the next cycle
-onwards and keep carrying it. The **event** is that change, not the strobe that
-caused it.
+onwards and keep carrying it. The **event** is the arrival of the new pattern,
+not the strobe that caused it.
 
 The presentation rule, stated once here and relied on everywhere below:
 
@@ -608,8 +637,9 @@ cannot be answered by widening this block).
 Three of v2.0b's claims are checkable and are therefore obligations rather than
 intentions, and none of them waits for v2.0c:
 
-- **The pin sequence is the visit sequence** (§3.5), which is checked by comparing
-  the two, not by arguing about it.
+- **The pin sequence is the visit sequence**, one clock later and gated by the
+  context — checked as an equality on values (§10.2 item 1) rather than by
+  counting transitions, which is false (§10.2 item 8).
 - **The pin bits are the matrix's column** (§3.4) — for a concrete context, the
   pattern presented at step `t` reproduces `R(pi(t))` exactly, against
   `validation/reference.py`.
@@ -662,11 +692,26 @@ appears as a disagreement, and it cannot hide behind agreement on the pins.
 ### 10.2 What the model must be able to falsify
 
 The value of this document is in this list. Each item is a way it could be wrong,
-and each is a case the suite is obliged to drive:
+and each is a case the suite is obliged to drive. Two of them have already been
+corrected by the model, and the corrections are in place below rather than in a
+footnote: the unsound half of item 1, and the transition count of item 8. Both
+were claims that *sounded* like the same statement made twice and were not.
 
-1. **One clock, not zero and not two.** A visit in cycle `k` must not change the
-   pins in cycle `k` (that would be a combinational passthrough), and must change
-   them in cycle `k + 1`.
+1. **One clock, not zero and not two.** The visit presented in cycle `k` is
+   present in the pins in cycle `k + 1`. The check is an **equality on the
+   value** (`pins(k+1)` is the `column_bits` of cycle `k`), not a claim that the
+   pins *changed*; item 8 is why.
+   The tempting companion claim — "the pins must not reflect a visit in the
+   visit's own cycle" — is **not checkable**, and an earlier draft asserted it.
+   When two consecutive visits present the same pattern (a row of weight `N` is
+   active in every column), the pins legitimately arrive at the current bits
+   because the *previous* visit presented that value, and no observation of the
+   pins distinguishes that from a passthrough. A combinational passthrough is
+   caught by the equality above whenever two consecutive patterns differ; when
+   they never differ it is genuinely unobservable on the pins, which is a fact
+   about the interface rather than a gap in the plan. `validation/
+   test_output_engine.py` records this beside the predicate, so the omission is
+   not mistaken for an oversight later.
 2. **Hold.** With no visit and a valid context, the pins are unchanged, however
    many cycles pass.
 3. **`done` is not special.** The last visit of a pass latches and presents like
@@ -678,14 +723,28 @@ and each is a case the suite is obliged to drive:
    gate fails, and it is the single most important test in the suite.
 6. **`rst` clears**, and it is the *observer's* reset that clears (so a mid-pass
    `OBS_CTRL.RESET` blanks), not merely the bus reset.
-7. **Exactly one change per visit.** Across a run, the number of pin transitions
-   equals the number of presented visits — no double-advance, no dropped visit, no
-   glitch on an unvisited cycle.
-8. **Counting, with F11's caveat.** A pass allowed to finish presents exactly `N`
-   visits and `N` (or `N - 1`) transitions — the off-by-one is real and must be
-   specified rather than assumed. A pass cut short by invalidation presents a
-   **prefix**, not `N`. This is the same correction the engine's own conservation
-   invariant needed, and it applies verbatim here.
+7. **A change is caused only by a visit, by the gate, or by reset.** A pin
+   transition may occur on a cycle only if one of: a visit was presented in the
+   preceding cycle; `valid` fell; or `rst` was asserted. Nothing else may move the
+   pins — no glitch on an unvisited cycle, no drift while simply idle.
+8. **Counting: the equality is false, and this document said it was true.** An
+   earlier draft of this list required "the number of pin transitions equals the
+   number of presented visits", and offered `N` or `N - 1` transitions per pass.
+   Both are wrong, and the counterexample is trivial: set every weight to zero —
+   legal, since `0 <= w_i <= N` — and every visit presents an empty pattern. A
+   three-visit pass then yields **three visits and zero transitions**.
+   `validation/output_engine.py`'s doctests carry that case. Nor is it a
+   pathological one: with active rows, two consecutive visits can still present
+   the same set, so a count can fall short by any amount. What survives is the
+   **value equality** of item 1 and the **containment** of item 7, and the bound
+   that containment implies: a change needs a cause, so
+   `changes <= visits + gate events + resets`. Not `changes <= visits`, which an
+   earlier draft wrote and which a reset in mid-pass breaks. This is the same
+   shape of correction F11 forced on the engine's conservation invariant — the
+   naive equality did not survive contact with a legal input — and it was found
+   by writing the model that items 1–11 exist to make possible.
+   Separately, and still true: a pass cut short by invalidation presents a
+   **prefix** of its visits, not `N`.
 9. **Nothing is presented from a dead matrix.** For every cycle: `pins_o` differs
    from idle only if the context was valid when the pattern was latched **and**
    `valid_i` is high now. This is the safety statement §6 exists for, and it is
@@ -784,6 +843,25 @@ The ones this layer is specific to:
 Each must fail loudly, and the §6.2 destroy in particular must fail *only* the test
 that exists for it — a mutation that everything catches measures nothing.
 
+**Which of these the model can plant, and which it cannot.** The three that are
+the stage's own behaviour — the passthrough, the dropped gate, and the dropped
+destroy — are planted in `validation/test_output_engine.py` through
+`Attached(stage_factory=...)`, and each must be caught by a *named* predicate.
+The passthrough is caught there whenever two consecutive patterns differ; §10.2
+item 1 records why it cannot be caught when they never differ. The remaining five
+— polarity before the gate, `rst` wired to the bus reset alone, cleared on
+`done`, `done` delayed, and a lane above `C` presented — are **wiring**
+mutations, not behaviours of the block, so they belong to the RTL harnesses
+(`sim/bcmc_out_engine_test.cpp` and `sim/tb_out_engine.v`), which can rewire a
+port and cannot be planted in a Python stage at all.
+
+**And the battery needs a correct variant.** It carries one: a stage that destroys
+on *any* cycle where `valid` is low rather than only on the falling edge. The two
+are equivalent — they differ only in cycles where nothing is presented — so the
+suite must **accept** it. A test suite that rejects a correct alternative
+implementation is wrong about the specification, not strict about it, and that
+failure mode is invisible without a control.
+
 ---
 
 ## 11. Decisions taken, and what remains
@@ -876,5 +954,11 @@ It leans on three artefacts that already exist and are frozen:
 §6.2), and `rtl/bcmc_observer.v` (the scheduled/presented split of §3.7, which §6.2
 copies one layer down).
 
-**Status.** Specification, not frozen. The next artefact is
-`validation/output_engine.py`, and it exists to prove this document wrong.
+**Status.** Specification, **not frozen**. The model exists and its suite is green
+(`validation/output_engine.py`, `validation/test_output_engine.py`), and between
+them they have already proved four things in this document wrong or unsupported —
+§3.1's "one event per visit", §10.2 items 1, 7 and 8, and §10.2 item 1's
+companion claim, which is not checkable at all. The RTL is the step that would
+freeze the rest, and it is deliberately not started: on this project's record a
+specification becomes a specification when a model has failed to falsify it *and*
+an implementation has been held to it. The first is done; the second is not.
