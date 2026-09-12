@@ -152,6 +152,11 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 output_engine.py ) || die "validation/output_engine.py"
 ( cd validation && python3 test_output_engine.py ) || die "validation/test_output_engine.py"
 
+# The stimulus corpus the output engine's RTL is replayed against, written by the
+# generator that also checks it discriminates: every wiring fault section 10.6
+# assigns to the harness layer must differ from the corpus somewhere.
+( cd validation && python3 gen_out_engine_vectors.py ) || die "gen_out_engine_vectors.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
