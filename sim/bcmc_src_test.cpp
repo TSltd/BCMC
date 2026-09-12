@@ -314,6 +314,7 @@ int run_shuffled(const std::string& path) {
                     const long long v = dut.ts_pi & 0xFFFF;
                     if (g == 0) {
                         seen.push_back(v);
+                        g_checks++;                 // one comparison per ask
                     } else if (v != seen.back()) {
                         // The bank cannot change within one ask.
                         fail(where, "ts_pi changed while one ask was held");
@@ -321,6 +322,8 @@ int run_shuffled(const std::string& path) {
                     clk();
                 }
             }
+
+            g_checks++;                             // one verdict per pass
 
             auto matches = [&](long long k) {
                 if (k < 0 || k >= static_cast<long long>(banks.size()))
@@ -352,9 +355,20 @@ int run_shuffled(const std::string& path) {
                         fail(where, "a repeat without underrun -- the flag must"
                                     " say so");
                 } else if (got_rep && got_new) {
-                    // The two candidates are the same permutation, so which was
-                    // read is not observable. N = 1 is that case: every bank is
-                    // [0]. Its asks were still compared above.
+                    // The two candidates are the SAME permutation, so the content
+                    // cannot say which was read. This is not only N = 1: for N = 2
+                    // the two permutations of {0, 1} coincide whenever the stream
+                    // comes round to the same one again, and q_n2_s1 does exactly
+                    // that. `underrun` is then the only observable that separates
+                    // "a new bank arrived" from "the same bank came round again",
+                    // which is precisely what the flag is for -- so the cursor is
+                    // advanced on the flag, not on the content.
+                    if (dut.underrun) {
+                        if (kind == 0)
+                            fail(where, "a repeat in a qualified run");
+                    } else {
+                        cur++;
+                    }
                 } else {
                     long long which = -1;
                     for (std::size_t k = 0; k < banks.size(); k++) {
