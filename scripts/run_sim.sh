@@ -137,8 +137,13 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 observer_periph.py ) || die "validation/observer_periph.py"
 ( cd validation && python3 test_observer_periph.py ) || die "validation/test_observer_periph.py"
 
-# The bus corpus the peripheral RTL is replayed against.
+# The bus corpus the peripheral RTL is replayed against, and its first
+# consumer: the model replayer. It treats the corpus as FIXED EXTERNAL input --
+# generator -> corpus -> model -- rather than asking the model to regenerate the
+# answers and then agreeing with itself. It is where a corpus that encodes the
+# wrong thing gets caught before any RTL is involved.
 ( cd validation && python3 gen_observer_wb_vectors.py ) || die "gen_observer_wb_vectors.py"
+( cd validation && python3 replay_observer_wb.py ) || die "replay_observer_wb.py"
 
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python

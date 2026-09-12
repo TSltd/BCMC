@@ -35,7 +35,8 @@ mapfile -t FILES < <(
        validation/observer_hw.py validation/test_observer_hw.py \
        validation/gen_observer_hw_vectors.py \
        validation/observer_periph.py validation/test_observer_periph.py \
-       validation/gen_observer_wb_vectors.py 2>/dev/null
+       validation/gen_observer_wb_vectors.py \
+       validation/replay_observer_wb.py 2>/dev/null
 )
 
 status=0
