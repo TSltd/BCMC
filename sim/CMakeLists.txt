@@ -223,6 +223,41 @@ verilate(bcmc_observer_hw_test
                  -GMAX_C=${BCMC_MAX_C})
 
 #---------------------------------------------------------------------------
+# the traversal sources: three modules, one harness, one executable
+#
+# verilate() attaches to a target that already exists, so calling it three times
+# on one target accumulates three generated module sets, each with its own PREFIX
+# and its own --top. That keeps the harness one source with a mode argument
+# rather than three near-copies, and each source is still verilated on its own:
+# there is no instantiation between them to drag anything in.
+#
+# The geometry is passed to Verilator and to the harness alike, and BANK_N_MAX is
+# named rather than left to the module default, so the build and the reference
+# cannot drift -- the lesson the observer corpus taught the hard way.
+#---------------------------------------------------------------------------
+
+add_executable(bcmc_src_test bcmc_src_test.cpp)
+target_link_libraries(bcmc_src_test PRIVATE bcmc_sim_common)
+
+verilate(bcmc_src_test
+  SOURCES ${BCMC_RTL}/bcmc_src_affine.v
+  TOP_MODULE bcmc_src_affine
+  PREFIX Vbcmc_src_affine
+  VERILATOR_ARGS -Wall -GVAL_W=${BCMC_VAL_W})
+
+verilate(bcmc_src_test
+  SOURCES ${BCMC_RTL}/bcmc_src_identity.v
+  TOP_MODULE bcmc_src_identity
+  PREFIX Vbcmc_src_identity
+  VERILATOR_ARGS -Wall -GVAL_W=${BCMC_VAL_W})
+
+verilate(bcmc_src_test
+  SOURCES ${BCMC_RTL}/bcmc_src_shuffled.v
+  TOP_MODULE bcmc_src_shuffled
+  PREFIX Vbcmc_src_shuffled
+  VERILATOR_ARGS -Wall -GVAL_W=${BCMC_VAL_W} -GBANK_N_MAX=256)
+
+#---------------------------------------------------------------------------
 # bcmc_wb: the register map, on real wires
 #
 # The whole design is under test here, because the wrapper instantiates it:
@@ -634,6 +669,21 @@ add_test(NAME observer_hw_edge
 add_test(NAME observer_hw_projection
          COMMAND bcmc_observer_hw_test ${BCMC_VECTORS}/matrix_edge.txt
                  ${BCMC_VECTORS}/matrix_random.txt)
+
+# The traversal sources under the second simulator. The two corpora are the same
+# artefacts the Icarus benches replay, consumed by a harness that reads them
+# independently and derives its expectations independently -- the affine from the
+# closed form, the shuffled source from the corpus's own pinned banks. The
+# identity has no corpus: it has no state to prepare, and its verification is the
+# seam regression, not a standalone replay.
+add_test(NAME src_affine
+         COMMAND bcmc_src_test affine ${BCMC_VECTORS}/srcaff_edge.txt)
+
+add_test(NAME src_shuffled
+         COMMAND bcmc_src_test shuffled ${BCMC_VECTORS}/srcshuf_edge.txt)
+
+add_test(NAME src_identity
+         COMMAND bcmc_src_test identity)
 
 add_test(NAME observer_hw_trace
          COMMAND bcmc_observer_hw_test --limit 6
