@@ -164,6 +164,8 @@ step "6/12  the hardware observer engine satisfies its specification"
 # layer it came from. It found two defects in the document on first run.
 ( cd validation && python3 traversal_sources.py ) || die "validation/traversal_sources.py"
 ( cd validation && python3 test_traversal_sources.py ) || die "test_traversal_sources.py"
+( cd validation && python3 observer_window.py ) || die "observer_window.py"
+( cd validation && python3 test_observer_window.py ) || die "test_observer_window.py"
 
 # The affine source's stimulus corpus, which is a *script* rather than a table
 # because section 4.4 promises no cycle count for the derivation. The generator
