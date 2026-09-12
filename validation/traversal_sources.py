@@ -486,6 +486,8 @@ class ShuffledSource(Source):
         self.rng = SplitMix32(self.seed)
         self.banks = []
         self.active = None
+        self.built = 0                 # banks completed since the load
+        self.startup_done = False
         self.unservable = self.N > self.bank_n_max
         if not self.unservable:
             self._start_fill()
@@ -499,10 +501,55 @@ class ShuffledSource(Source):
         self.fill_remaining -= 1
         if self.fill_remaining <= 0:
             self.banks.append(self.fill)
+            self.built += 1
+            if self.built >= self.lead:
+                # Latched, and never cleared by an underrun: this is the
+                # start-up condition of section 5.4, not a queue-depth test.
+                self.startup_done = True
             self._start_fill()
 
     def ready(self):
-        return not self.unservable and len(self.banks) >= self.lead
+        """
+        Start-up complete and the geometry is servable -- **latched**, not a
+        queue-depth test.
+
+        This was `len(self.banks) >= lead` until the RTL forced the question, and
+        that formulation cannot survive steady state. With the two banks section
+        5.4's table implies, the queue holds at most one bank once a pass is
+        playing (the other is active), so a depth test drops `ready` the moment
+        the first pass starts -- refusing START for a source that is working
+        perfectly, and, worse, making `ready` a *transient* that composition code
+        would trip over. `bind_pass` did exactly that: it refuses a source whose
+        `ready()` is false, so binding a second pass to a shuffled source raised.
+
+        The property that matters is section 5.4's: LEAD banks have been built
+        since the load, so the buffer is funded. Nothing needs to un-set it, and
+        an underrun must not: violating the rate bound is a *freshness* fault
+        (section 7.3), reported on `underrun`, and a source that repeats a
+        complete bank is still perfectly serviceable.
+
+        Unservable `N` is still a readiness failure (section 5.3) and is the one
+        thing that is not latched, because no amount of time fixes it.
+
+        >>> s = ShuffledSource(8, 1)
+        >>> s.ready()
+        False
+        >>> while s.built < LEAD:
+        ...     s.tick()
+        >>> s.ready()
+        True
+        >>> _ = s.start_pass()          # the first pass; the queue is now short
+        >>> len(s.banks) < s.lead
+        True
+        >>> s.ready()                   # ... and still ready, because it latched
+        True
+
+        (This model's queue is unbounded, so it holds a bank for every fill it
+        finishes. The hardware has two banks, so its queue is at most one while a
+        pass is playing. The *rate* condition of section 5.4 is the same
+        statement about both, and it is the one the phase is built on.)
+        """
+        return (not self.unservable) and self.startup_done
 
     def walk_bank(self):
         """The pass the active bank defines. Combinational, and free."""

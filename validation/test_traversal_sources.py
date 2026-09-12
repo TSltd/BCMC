@@ -217,6 +217,39 @@ def test_fill_and_lead():
     print(f"  lead = {LEAD} banks, and readiness is never granted before them")
 
 
+def test_startup_readiness_is_latched():
+    suite("Layer 2 -- readiness is a latched start-up condition, not a depth test")
+    s = ShuffledSource(8, 1)
+    check(not s.ready(), "not ready before any bank has been built")
+    ticks = 0
+    while s.built < LEAD and ticks < 4000:
+        s.tick()
+        ticks += 1
+    check(s.ready(), "ready once LEAD banks have been built")
+    check(len(s.banks) == LEAD, "exactly LEAD banks are queued at that moment")
+    s.start_pass()
+    check(len(s.banks) == LEAD - 1, "starting a pass consumes a queued bank")
+    check(s.ready(), "and readiness survives it -- the queue is short, not empty")
+    s.tick()          # let the fill add one
+    check(s.ready(), "still ready")
+    # the composition trap this fixes: bind_pass refuses a source that is not
+    # ready, so a depth-based ready() made a *second* pass unboundable.
+    from traversal_sources import bind_pass
+    s2 = ShuffledSource(8, 3)
+    while not s2.ready():
+        s2.tick()
+    _ = bind_pass(s2)
+    _ = bind_pass(s2)          # would raise if ready had gone false
+    check(True, "a second pass binds to a shuffled source (it did not raise)")
+    # and an unservable N is still refused, because no time fixes it
+    big = ShuffledSource(4096, 1)
+    for _ in range(50):
+        big.tick()
+    check(not big.ready(), "an unservable N stays unready however long you wait")
+    print(f"  LEAD = {LEAD} banks fund the buffer, and readiness latches; a")
+    print("  short queue afterwards is a repeat, not a refusal")
+
+
 def test_underrun_repeats_a_complete_bank():
     suite("Layer 2 -- underrun repeats a complete bank, so O1 holds")
     s = ShuffledSource(8, 5)
@@ -448,6 +481,7 @@ def main():
         test_rejection_stream_against_prng,
         test_draw_order_matters,
         test_fill_and_lead,
+        test_startup_readiness_is_latched,
         test_underrun_repeats_a_complete_bank,
         test_partial_banks,
         test_readiness_is_a_contract,
