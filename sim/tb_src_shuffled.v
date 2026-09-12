@@ -356,6 +356,10 @@ module tb_src_shuffled;
 
                 end else if (tag == "X") begin
                     n = $fscanf(fd, "%d", cycles);
+                    // Section 8.2: the engine drives ts_t = 0 in IDLE, and a reset
+                    // does not suspend that. Leaving ts_t at its last ask would
+                    // make the next pass's ask for step 0 look like a wrap.
+                    ts_t = {VAL_W{1'b0}};
                     rst = 1'b1;
                     for (j = 0; j < cycles; j = j + 1) clock1();
                     rst = 1'b0;
@@ -367,6 +371,7 @@ module tb_src_shuffled;
                 end else if (tag == "L") begin
                     n = $fscanf(fd, "%h", rseed);
                     seed = rseed;
+                    ts_t = {VAL_W{1'b0}};      // as above: IDLE drives 0
                     load = 1'b1;
                     clock1();
                     load = 1'b0;

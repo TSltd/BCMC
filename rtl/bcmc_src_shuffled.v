@@ -276,6 +276,12 @@ module bcmc_src_shuffled #(
             built_q     <= 2'd0;
             ready_q     <= 1'b0;
             underrun_q  <= 1'b0;
+            // A re-seed restarts the *pass* order as well as the stream, and the
+            // detector's job is to see a wrap -- which cannot span a re-seed. It
+            // must be cleared here for the same reason the reset clears it, or a
+            // `ts_t` left non-zero by the caller turns the next pass's ask for
+            // step 0 into a spurious boundary and hands in the wrong bank.
+            ts_t_q      <= {VAL_W{1'b0}};
             wmask_q     <= {DEPTH{1'b0}};
         end else begin
             ts_t_q <= ts_t;
