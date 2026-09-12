@@ -499,6 +499,58 @@ makes it reachable. This is a *stronger* and simpler statement than the opening
 document's, and it is the one the model must check: for every `N` in range, the
 smallest `R` for which `N * R >= c_fill(N)`, and the resulting sustained rate.
 
+### 5.5 The bank: how many, how the identity is free, and what `ready` means
+
+Four things this section left implicit, all found by starting
+`rtl/bcmc_src_shuffled.v`. Three are choices this document has to make; the
+fourth is a defect in the model.
+
+**The fill figure does not include the initialisation, and it must not have to.**
+§5.2 records `~1.4 N` from `bank_fill_cycles`, which counts `next()` calls. That
+figure and the paragraph's own requirement — "the bank is initialised to the
+identity and the `N - 1` swaps are applied to it directly" — cannot both hold if
+the initialisation is *materialised*, because writing `N` entries costs `N` cycles
+and the fill becomes about `2.25 N` for every `N` measured (7+8 at `N = 8`,
+340+256 at `N = 256`). §5.4's "about one visit per two clocks" would become about
+three, and `R = 1` would go from unreachable to further unreachable.
+
+So the identity is **implicit**: each bank carries a written-mask, a read of an
+unwritten entry returns its own index, and a swap marks both entries written. The
+mask is cleared by reset in one cycle, which materialising `N` entries cannot be.
+The two are equivalent *for a complete bank* — an entry no swap ever touched holds
+its index in the reference too — and §7's rule means a partial bank is never read,
+so nothing else has to match. `bank_fill_cycles` therefore stays the right
+measurement, and §5.4's table is unchanged. The cost is the mask (one bit per
+entry, per bank) and a multiplexer on the read path, and it is worth stating that
+this is what the number in §5.2 assumes.
+
+**A swap is two bank writes, so a step needs two write ports.** §5.2's "plus one
+bank write" per step is a shorthand: the step writes position `i` *and* position
+`j`. With a single write port that is two cycles per step and the fill degrades to
+about `2 N`; with two, both writes land in the cycle of the accepted draw, which
+is what makes the total the *draw count* — the number §5.2 records. As with
+`j == i`, the two writes may name the same entry, and that case is one write.
+
+**There are two banks.** §5.4's start-up row — `LEAD * c_fill(N)` cycles of
+buffering before the first pass — fixes it: with `LEAD = 2` both banks are filled
+before the first pass, and thereafter one is active and at most one is queued. The
+document never said so, and it decides what `LEAD` can mean: it funds the buffer,
+it does not create a queue, and §5.4's "`LEAD` passes of accumulated deficit" is
+the honest reading of it. A third bank would raise the steady-state reserve but
+not the sustained rate, which is the inequality and nothing else.
+
+**`ready` is a latched start-up condition, not a queue depth.** This is the model
+defect. `ShuffledSource.ready()` was `len(self.banks) >= lead`, and with two banks
+the queue holds at most one bank once a pass is playing — so a depth test drops
+`ready` the moment the first pass starts, refusing START for a source that is
+working perfectly. It bit composition directly: `bind_pass` refuses a source whose
+`ready()` is false, so **binding a second pass to a shuffled source raised**. The
+model is corrected to latch "LEAD banks have been built since the load", which is
+§5.4's actual condition. Nothing un-sets it, and an underrun must not: §7.3 makes
+the rate bound a *freshness* precondition, so a source repeating a complete bank
+is still serviceable. An unservable `N` remains the one thing not latched, because
+no amount of time fixes it.
+
 `LEAD` is therefore a parameter with **default 2**, and its job is the other two
 rows: it sets the latency from a seed write to a servable bank, and it absorbs the
 *variance* of a fill whose draw count is itself random. It is not a knob that
@@ -919,6 +971,27 @@ a specification stops being prose.
     agreeing. §7.1 now states the split, and §8.1's interface is unchanged: the
     identity still declares no `clk` and no `ready`, because its contribution to
     the window's AND is a constant `1`.
+20. **§5.2's `~1.4 N` fill omits the identity initialisation the same paragraph
+    requires.** Materialising the identity costs `N` cycles and makes the fill
+    about `2.25 N`, which would change §5.4's rate to about three clocks per
+    visit. Resolved by keeping the identity **implicit** (a written-mask per bank,
+    an unwritten entry reading as its own index), which is equivalent for a
+    complete bank and leaves both §5.2's number and §5.4's table intact. Now
+    stated in §5.5, because the number depends on it.
+21. **The bank count was never stated, and it decides what `LEAD` means.** Two,
+    fixed by §5.4's start-up row: `LEAD` banks are built before the first pass, so
+    with `LEAD = 2` one is active and at most one is queued thereafter. §5.5.
+22. **`ready` was a queue-depth test and cannot survive steady state.** Found in
+    the model while writing the source: with two banks the queue holds at most one
+    once a pass is playing, so `ShuffledSource.ready()` went false the moment the
+    first pass started — and `bind_pass` refuses a source that is not ready, so
+    **binding a second pass to a shuffled source raised**. Corrected to a latched
+    start-up condition; an underrun must not clear it, because §7.3 makes the rate
+    bound a freshness fault rather than a validity one. §5.5, and the regression is
+    now a test.
+23. **A swap is two bank writes, so a step needs two write ports.** §5.2's "one
+    bank write" per step hides this; with one port the fill is about `2 N`, not the
+    draw count. §5.5.
 
 ### Remaining, and who decides
 
@@ -932,29 +1005,44 @@ a specification stops being prose.
 
 ### Status
 
-Sections 1 to 8 are **specification**, corrected five times: twice by
-`validation/traversal_sources.py` (which is held by
-`validation/test_traversal_sources.py` — 211 checks across the three layers, four
-mutants caught, one documented gap) and three times by writing
-`rtl/bcmc_src_affine.v`. The five earlier findings remain on the record: §2
-declined to spend a requalification that was available, §5.4 corrects one the
-architecture document made, and §6.4 records a coupling invisible until the
-frozen corpus was read carefully.
+Sections 1 to 8 are **specification**, corrected ten times: twice by
+`validation/traversal_sources.py` (held by `validation/test_traversal_sources.py`
+— 219 checks across the three layers, four mutants caught, one documented gap),
+once by the model again while starting the shuffled source (finding 22), three
+times by writing `rtl/bcmc_src_affine.v`, once by writing
+`rtl/bcmc_src_identity.v`, and three times by starting
+`rtl/bcmc_src_shuffled.v` (20, 21, 23). The five earlier findings remain on the
+record: §2 declined to spend a requalification that was available, §5.4 corrects
+one the architecture document made, and §6.4 records a coupling invisible until
+the frozen corpus was read carefully.
 
-`rtl/bcmc_src_affine.v` exists and is **unverified**: its derivation algorithm has
-been checked against `derive_ab` — 315 (seed, N) pairs agree on `(a, b)`, and all
-216 pairs where the draw count is fixed agree on the number of draws consumed —
-and it is lint-clean under Verilator `-Wall`, but **no simulation has run against
-it**. The next artefacts are its testbench, the identity and shuffled sources, and
-then the two-port engine change of §8.2, whose obligation is the strictest in the
-phase: every v2.0a suite must pass *unchanged* afterwards.
+`rtl/bcmc_src_affine.v` is **verified**: 14 runs, 19 walks, 207 walk cycles and
+247 checks green under `sim/tb_src_affine.v`, an independent Icarus bench that
+computes the closed form itself. It found a real defect in the module — the
+generator's state register was being loaded with the mixed output rather than the
+counter — which lint, the Python transcription and the model all passed. That is
+the argument for the bench, and the reason §5.5 is emphatic about the same
+distinction for the shuffle's generator.
+
+`rtl/bcmc_src_identity.v` exists and is deliberately **not** separately tested: it
+is one `assign`, and a bench that drives `ts_t` and checks `ts_pi == ts_t` would
+test it against itself. Its verification is the seam regression, where the identity
+wired to `bcmc_observer.v` must reproduce the v2.0a trace exactly.
+
+`rtl/bcmc_src_shuffled.v` is **not written yet**; the specification corrections it
+forced are the subject of §5.5, and the source comes next. Then the two-port engine
+change of §8.2, whose obligation is the strictest in the phase: every v2.0a suite
+must pass *unchanged* afterwards.
 
 The gap is worth naming plainly, because it is the one thing the suite cannot
 check: an in-place partial bank is invisible to O1, so **the "repeat a complete
 bank" rule is not validated by any property test** — it is validated by the
 argument in §7.3 that the alternative is unobservable. The RTL's testbenchers
 should therefore treat "the active bank is never read mid-fill" as a structural
-property to assert directly, not as a consequence of O1.
+property to assert directly, not as a consequence of O1. §5.5 makes that harder
+rather than easier: with the identity implicit, a partial bank is *also* a valid
+permutation by a second route, so the structural check is now the only one there
+is.
 
 ---
 
