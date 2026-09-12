@@ -99,6 +99,17 @@ ST_ABORTED = 1 << 2                     # RW1C
 _READ_ONLY = (OBS_ID, OBS_VERSION, OBS_CAPS, OBS_PASS, OBS_TRIG)
 _ONE_SHOT_BITS = (CTRL_START, CTRL_STEP, CTRL_RESET)
 
+# The reference build geometry of rtl/bcmc_obs_wb.v, and the geometry this model
+# reports in OBS_CAPS: (IDX_W << 24) | (VAL_W << 16) | MAX_C. The geometry is
+# baked into what that register answers, so a corpus generated for one geometry
+# is not valid for another. These are the defaults of the constructor, so the
+# generator and the replayer cannot drift from each other; sim/CMakeLists.txt
+# must build rtl/bcmc_obs_wb.v with the same numbers, and the first recording
+# reads OBS_CAPS so that a mismatch fails loudly rather than subtly.
+REF_MAX_C = 64
+REF_VAL_W = 16
+REF_IDX_W = 16
+
 
 class ObserverPeriph:
     """
@@ -117,7 +128,8 @@ class ObserverPeriph:
     """
 
     def __init__(self, N=0, C=0, oneshot=False, valid=False,
-                 max_c=32, val_w=16, idx_w=16, source=identity_source):
+                 max_c=REF_MAX_C, val_w=REF_VAL_W, idx_w=REF_IDX_W,
+                 source=identity_source):
         if max_c < 1:
             raise ValueError(f"max_c must be >= 1, got {max_c}")
 

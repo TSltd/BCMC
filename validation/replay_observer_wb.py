@@ -127,7 +127,7 @@ def replay(path):
                          f"file has {len(rows)}")
             continue
         runs += 1
-        p = ObserverPeriph(N=run["N"], C=run["C"], max_c=16)
+        p = ObserverPeriph(N=run["N"], C=run["C"])
 
         i = 0
         while i < len(rows):

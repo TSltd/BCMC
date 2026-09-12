@@ -97,7 +97,10 @@ def observable(p, N, W, O, C):
 
 def walk(name, N, C, W, O, ops):
     """Run one peripheral through `ops`; return the run's cycle records."""
-    p = ObserverPeriph(N=N, C=C, max_c=16)
+    # The geometry is the model's default: the reference build geometry that
+    # OBS_CAPS reports. Overriding it here would put the corpus and the RTL
+    # build out of step, and OBS_CAPS is the register that would say so.
+    p = ObserverPeriph(N=N, C=C)
     rows = []
     txns = 0
 
