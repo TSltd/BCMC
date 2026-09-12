@@ -227,7 +227,12 @@ module bcmc_src_shuffled #(
 
     always @(posedge clk) begin
         if (rst) begin
-            pstate_q    <= 32'd0;
+            // A reset is equivalent to a load with the seed currently held, so the
+            // stream restarts at the seed rather than at counter zero. The
+            // difference only shows when `seed` is not zero, which is exactly what
+            // the corpus's reset run exercises: seed = 0x1234, and the first bank
+            // after the reset must be bank 0 of that stream again.
+            pstate_q    <= seed;
             st0_q       <= ST_EMPTY;
             st1_q       <= ST_EMPTY;
             playing_q   <= 1'b0;
@@ -372,14 +377,28 @@ module bcmc_src_shuffled #(
 
     always @(posedge clk) begin
         if (!rst) begin
-            // THE INVARIANT: the fill never writes the bank being read. Checked
-            // only once a pass has been admitted -- before that nothing is reading,
-            // and the bank being filled is legitimately also the bank the read path
-            // would use.
-            if (started_q && fill_busy_q && (fill_bank_q == playing_q)) begin
-                $display("bcmc_src_shuffled: ERROR filling bank %0d while it is",
+            // THE INVARIANT, in two forms, because they catch different mistakes.
+            //
+            // (1) The bank the fill is working on must not be a bank whose content
+            // the read path is using. Gated on `readable` rather than on
+            // `started_q`: a bank in EMPTY is not yet worth protecting, and one in
+            // COMPLETE or PLAYING is.
+            if (fill_busy_q && readable && (fill_bank_q == read_bank)) begin
+                $display("bcmc_src_shuffled: ERROR filling bank %0d while the read",
                          fill_bank_q);
-                $display("  being played (section 5.5: the bank is not isolated)");
+                $display("  path is using it (section 5.5: not isolated)");
+                $stop;
+            end
+            // (2) The *address* being written must be in the fill's own bank. A
+            // module that computed the selector correctly but addressed the other
+            // bank would pass (1) and corrupt the traversal anyway -- which is what
+            // scripts/mutate_bank_isolation.sh builds, precisely to check that this
+            // second form earns its place.
+            if (fill_busy_q && f_take && readable &&
+                ((f_iaddr[AW] == read_bank) || (f_jaddr[AW] == read_bank))) begin
+                $display("bcmc_src_shuffled: ERROR a shuffle write addresses bank %0d",
+                         read_bank);
+                $display("  which the read path is using");
                 $stop;
             end
             // The bank about to play must be whole. In a correct build `ready` gates
