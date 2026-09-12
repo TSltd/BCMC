@@ -219,6 +219,24 @@ def test_ready_bit_follows_the_selected_source():
     print("READY: projected from whatever is selected")
 
 
+def test_ctrl_readback_is_selector_and_oneshot_only():
+    w = Window(N=6, seed=5)
+    check(w.read_ctrl() == 0, "fresh: selector 0, ONESHOT 0")
+    check(w.write_ctrl(ctrl(SEL_AFFINE, oneshot=True), running=False) is True,
+          "an accepted CTRL write")
+    check(w.read_ctrl() == 0x18, "SELECT in 5:4, ONESHOT in 3, nothing else")
+    check(w.ready() is False, "the affine has not derived yet")
+    check(w.read_ctrl() == 0x18, "readiness is not part of the readback")
+    drive_cycles(w, 4000)
+    check(w.ready() is True, "now it has derived")
+    check(w.read_ctrl() == 0x18, "and the CTRL readback has not moved")
+    check(w.write_ctrl(ctrl(SEL_AFFINE, oneshot=True, step=True),
+                       running=True) is True,
+          "a STEP carrying the same selector and ONESHOT is accepted")
+    check(w.read_ctrl() == 0x18, "STEP is W1S: it reads 0, and ONESHOT survives")
+    print("CTRL readback: SELECT and ONESHOT; readiness and STEP move it not")
+
+
 #---------------------------------------------------------------------------
 # 9: identity transparency, against the FROZEN corpus
 #---------------------------------------------------------------------------
@@ -267,6 +285,7 @@ def main():
     test_ab_are_the_affine_s_regardless_of_selector()
     test_underrun_latches_and_reasserts_while_high()
     test_ready_bit_follows_the_selected_source()
+    test_ctrl_readback_is_selector_and_oneshot_only()
     test_identity_reproduces_the_frozen_corpus()
     if errors:
         print(f"test_observer_window: FAIL  {checks} checks, {errors} errors")

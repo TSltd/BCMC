@@ -932,8 +932,8 @@ and the frozen corpus cannot be replayed across it.** Item 5 above adds bits 3 a
 `SEED_READY` is therefore high, and an acknowledged read of `0x010` answers with
 bit 3 set where v2.0a answered `0`. The frozen corpus reads `0x010` **twelve
 times**, and `sim/bcmc_obs_wb_test.cpp` compares `wb_dat_o` exactly on every
-acknowledged cycle — so twelve recorded expectations (`0` and `1`) become `8` and
-`9`.
+acknowledged cycle — so all twelve recorded expectations, each of which is `0`,
+become `8`, and `8 | 0x10` wherever a bank was missed.
 
 *Classification: not an implementation defect, not a model bug, and not a reason
 to weaken item 5. It is a register-map extension.* This is the cleanest example in
@@ -978,8 +978,28 @@ identical except the acknowledged `0x010` reads, and each of those must equal th
 v2.0a value with `| 0x8` applied because bit 3 is `SEED_READY` (§7.1) — and with
 `| 0x10` as well where a bank was missed. Any difference outside that set, or any
 of those twelve differing by anything but those bits, is a defect and not an
-extension. The twelve `0 → 8` and `1 → 9` changes are thus a **proof obligation**,
-and the proof is that they are exactly and only the documented additions.
+extension. The twelve `0 → 8` changes are thus a **proof obligation**, and the
+proof is that they are exactly and only the documented additions.
+
+**11. A readable `SELECT`, and why it does not broaden the claim.** `OBS_CTRL`
+reads back bits 5:4 as the selector and bit 3 as `ONESHOT`, with the W1S bits
+reading `0` (`docs/Observer_Register_Map.md` §7). That is a v2.0c-added
+*observable*, and item 10's discipline applies to it exactly: it must not be
+allowed to widen what "v2.0a is preserved" means. It does not, and the reason is
+not an argument but a count — the frozen corpus reads `0x00C` four times, all with
+`ONESHOT` clear and the selector at the identity, so bits 5:4 read `0` and **the
+acknowledged value is unchanged**. The model states the layout, and
+`validation/observer_window.py`'s `read_ctrl` is where; the suite checks that the
+readback moves with `SELECT` and `ONESHOT` and with nothing else — readiness,
+`RUNNING` and the armed trigger source belong to other registers, and a readback
+that followed any of them would be a second status register wearing a control
+register's name.
+
+Whether this readback is a *boundary* is therefore left to the differ, as item 10
+says: **unchanged** old observations mean compatibility is preserved;
+**documented `STATUS` additions** mean an expected version-boundary difference; and
+**any other difference** means stop and classify. The corpus has not been touched
+to make any of that true, and `obswb_edge.txt` still has no reason to be.
 
 ---
 

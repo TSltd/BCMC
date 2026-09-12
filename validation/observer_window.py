@@ -39,7 +39,7 @@ def ctrl(sel, step=False, oneshot=False):
     18
     """
     return ((sel & 0x3) << CTRL_SEL_SHIFT) | (0x2 if step else 0) | \
-           (0x4 if oneshot else 0)
+           (0x8 if oneshot else 0)
 
 
 class Window:
@@ -55,6 +55,7 @@ class Window:
 
     def __init__(self, N=1, seed=0, bank_n_max=256):
         self.sel = SEL_ID
+        self.oneshot = False   # the window's mode bit; part of the CTRL readback
         self.seed = seed & 0xFFFFFFFF
         self.N = N
         self.n_q = N          # the window's own copy of N: the change detector
@@ -116,7 +117,31 @@ class Window:
         if sel != self.sel:
             self.sel = sel
             self._load_all()
+        # ONESHOT is a field of the SAME write, so an accepted write stores it
+        # whether or not the selector moved. A refusal stores nothing at all --
+        # that is the frozen rule the first doctest above is about.
+        self.oneshot = bool((value >> 3) & 1)
         return True
+
+    def read_ctrl(self):
+        """
+        An `OBS_CTRL` read: bits 5:4 `SELECT`, bit 3 `ONESHOT`, everything else 0.
+
+        The three W1S bits read 0 because they have no readable value, and the
+        reserved bits read 0 because they are reserved. The readback is therefore a
+        function of the selector and ONESHOT alone -- deliberately independent of
+        whether a source is ready, whether a pass is running, and which trigger
+        source is armed. Readable `SELECT` is a v2.0c addition, and this is where
+        its layout is stated; the RTL's read mux and the v2.0c corpus follow it.
+
+        >>> w = Window(N=4, seed=1)
+        >>> w.read_ctrl()
+        0
+        >>> _ = w.write_ctrl(ctrl(SEL_AFFINE, oneshot=True), running=False)
+        >>> w.read_ctrl()
+        24
+        """
+        return ((self.sel & 0x3) << CTRL_SEL_SHIFT) | (0x8 if self.oneshot else 0)
 
     def write_seed(self, seed, running):
         """
