@@ -260,17 +260,23 @@ module bcmc_observer #(
                 $display("bcmc_observer: ERROR visit_valid while IDLE");
                 $stop;
             end
-            // v2.0c: this is `col_q == ts_pi`, the invariant that holds for EVERY
-            // source. `col_q == t_q` was its identity-specific corollary, true
-            // only because the identity is what v2.0a wires to the seam -- so the
-            // check is generalised here, not deleted. Nothing moves into the
-            // source: a module that cannot see a cursor, a clock or a column
-            // cannot assert anything about one.
-            if (state_q == STATE_RUN && col_q !== ts_pi) begin
-                $display("bcmc_observer: ERROR column %0d != ts_pi %0d",
-                         col_q, ts_pi);
-                $stop;
-            end
+            // There is deliberately NO `col_q == ts_pi` check here, and the
+            // reason is worth recording because v2.0a's first attempt at one was
+            // wrong. The engine asks about the step it is about to PRESENT, so in
+            // a settled cycle `ts_pi` answers `t_next` while `col_q` holds the
+            // answer to the previous ask -- a one-step offset, because the ask
+            // must be latched an edge before the visit it produces. The check
+            // `col_q == ts_pi` therefore fails on every cycle, and it did.
+            //
+            // The invariant that does hold is `col_q == pi(t_q)`, and the engine
+            // cannot compute it: pi is not a pure function of its ask (the affine
+            // source's accumulator advances on the ask, so asking twice is not
+            // asking once). For v2.0a the identity makes `pi(t_q) == t_q`, which is
+            // what this file checked before the seam existed -- so the check is
+            // not deleted, it is SUPERSEDED: `column` is compared against
+            // validation/observer_hw.py on every cycle by the corpus
+            // (observer_hw_edge), which is both stronger than a local equality and
+            // not tautological, as any check of the wiring here would be.
         end
     end
 `endif

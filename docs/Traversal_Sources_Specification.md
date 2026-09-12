@@ -813,19 +813,23 @@ lets `col_q <= ts_pi` replace *both* of the two old expressions, `pi_at_start` a
 `t_next`: at a start the source answers step 0 by definition, so the engine no
 longer needs a separate `pi_at_start` path.
 
-**One assertion moves with the change.** `rtl/bcmc_observer.v` currently checks
-`col_q == t_q` while it is in RUN, commented as "the one line a v2.0c source will
-legitimately change". That is only true *because* the identity is what is wired to
-the seam — it is the identity-specific corollary of
+**One assertion does NOT move as described here, and this paragraph was wrong.**
+The first attempt generalised `col_q == t_q` into `col_q == ts_pi` and it fails on
+*every* cycle — `column 0 != ts_pi 1` was the first report. The engine asks about
+the step it is about to **present**, so in a settled cycle `ts_pi` answers `t_next`
+while `col_q` holds the answer to the previous ask: a one-step offset, because the
+ask must be latched an edge before the visit it produces. The invariant that does
+hold is `col_q == pi(t_q)`, and the engine cannot compute it — `pi` is not a pure
+function of its ask, since the affine source's accumulator advances *on* the ask,
+so asking twice is not asking once.
 
-```text
-    col_q == ts_pi
-```
-
-which holds for every source and is the actual invariant. So the check is not
-deleted when the seam is filled; it is **generalised**, in the engine, at the same
-time. Nothing about it moves into the identity source: a module that cannot see a
-cursor, a clock or a column cannot assert anything about one.
+For v2.0a the identity makes `pi(t_q) == t_q`, which is exactly what
+`rtl/bcmc_observer.v` checked before the seam existed. So that check is
+**superseded rather than generalised**: `column` is compared against
+`validation/observer_hw.py` on every cycle by the `observer_hw_edge` corpus, which
+is stronger than a local equality and — unlike any check of the wiring inside the
+engine — is not tautological. The engine now carries no traversal assertion at
+all, and the comment in its place records why.
 
 ### 8.3 The window, which owns the selector and the mux
 
