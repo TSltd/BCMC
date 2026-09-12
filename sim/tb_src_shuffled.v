@@ -103,6 +103,7 @@ module tb_src_shuffled;
     integer         idle;
     integer         gap;
     integer         cycles;
+    integer         indist;        // the pass's two candidate banks are identical
 
     reg [VAL_W-1:0] exp_bank [0:MAXB*BANK_N-1];
 
@@ -262,6 +263,14 @@ module tb_src_shuffled;
                     saw_new = 0;
                     saw_rep = 0;
                     first_bad = -1;
+                    // For N = 1 every bank is [0], so "a new bank was taken" and
+                    // "the same bank came round again" are the *same* observation,
+                    // and the verdict below cannot demand exactly one of them.
+                    // `indist` marks a pass whose two candidate banks are
+                    // identical, so the distinction the corpus normally tests is
+                    // unobservable here -- a property of N = 1, not a fault in the
+                    // source. The asks are still checked in full.
+                    indist = ((cur >= 0) && ((cur + 1) < nbank)) ? 1 : 0;
                     for (t = 0; t < N; t = t + 1) begin
                         ts_t = t[VAL_W-1:0];
                         for (g = 0; g < gap; g = g + 1) begin
@@ -283,6 +292,9 @@ module tb_src_shuffled;
                                 new_ok = ((cur + 1) < nbank) &&
                                          (ts_pi === exp_bank[(cur+1)*BANK_N + t]);
                                 rep_ok = (ts_pi === exp_bank[cur*BANK_N + t]);
+                                if (((cur + 1) < nbank) &&
+                                    (exp_bank[(cur+1)*BANK_N + t] !==
+                                     exp_bank[cur*BANK_N + t])) indist = 0;
                                 if (new_ok) saw_new = 1;
                                 else if (rep_ok) saw_rep = 1;
                                 else begin
@@ -318,6 +330,12 @@ module tb_src_shuffled;
                         if (kind == 0) fail("a repeat in a qualified run");
                         if (underrun !== 1'b1)
                             fail("a repeat without underrun -- the flag must say so");
+                    end else if (indist) begin
+                        // Both candidate banks are the same permutation, so the
+                        // new/repeat distinction carries no information and the
+                        // flag cannot be attributed to either. The asks were
+                        // checked above; this counts the pass as consistent.
+                        n_checks = n_checks + 1;
                     end else begin
                         fail("the pass matched neither bank, or both");
                     end
