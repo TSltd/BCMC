@@ -43,7 +43,7 @@ corpus exercises against that file rather than against the module.
 import os
 import sys
 
-from observers import SplitMix32
+from observers import SplitMix32, permuted_order
 from traversal_sources import bank_and_cost
 
 VECTOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -116,7 +116,9 @@ def load_prng_rows():
 # ---------------------------------------------------------------------------
 # The runs
 #
-#   R <name> <kind> <N> <seed> <rst>    begin; kind is q (qualified) or u
+#   R <name> <kind> <N> <seed> <rst>    begin; kind is q (qualified) or u.
+#                                       **<seed> is HEX** -- so is L's. The
+#                                       bench reads both with `%h`.
 #   B <k> <p0> ... <pN-1>               bank k of the stream
 #   P <pass> <idle> <gap>               drive one pass: `idle` cycles at ts_t = 0,
 #                                       then ts_t = 0,1,..,N-1, each held `gap`
@@ -142,7 +144,7 @@ def build_runs():
     # -- the smallest banks, where the fill is shorter than the arm cycle
     for N, seed in ((1, 0), (2, 1), (3, 2)):
         add(f"q_n{N}_s{seed:x}",
-            [f"R q_n{N}_s{seed:x} q {N} {seed} 2"] + bank_recs(
+            [f"R q_n{N}_s{seed:x} q {N} {seed:x} 2"] + bank_recs(
                 bank_stream(N, seed, 3)) +
             [f"P 0 {qual_idle(N)} 1", f"P 1 {qual_idle(N)} 1",
              f"P 2 {qual_idle(N)} 1"],
@@ -151,7 +153,7 @@ def build_runs():
     # -- banks around the sizes the shuffle's mask cares about
     for N, seed in ((7, 3), (8, 0x2A), (16, 0x3039), (64, 7), (100, 0xBEEF)):
         add(f"q_n{N}_s{seed:x}",
-            [f"R q_n{N}_s{seed:x} q {N} {seed} 2"] + bank_recs(
+            [f"R q_n{N}_s{seed:x} q {N} {seed:x} 2"] + bank_recs(
                 bank_stream(N, seed, 4)) +
             [f"P 0 {qual_idle(N)} 1", f"P 1 {qual_idle(N)} 1",
              f"P 2 {qual_idle(N)} 3"],
@@ -159,7 +161,7 @@ def build_runs():
 
     # -- BANK_N_MAX exactly: the largest bank there is
     add("q_n256_max",
-        ["R q_n256_max q 256 24173 2"] + bank_recs(bank_stream(256, 24173, 3)) +
+        [f"R q_n256_max q 256 {24173:x} 2"] + bank_recs(bank_stream(256, 24173, 3)) +
         [f"P 0 {qual_idle(256)} 1", f"P 1 {qual_idle(256)} 1"],
         "bank_n_max", "qualified")
 
@@ -172,7 +174,7 @@ def build_runs():
     # -- underrun: passes back to back, repeating the last complete bank
     N, seed = 8, 0x9E3779B9
     add("u_backtoback",
-        [f"R u_backtoback u {N} {seed} 2"] + bank_recs(
+        [f"R u_backtoback u {N} {seed:x} 2"] + bank_recs(
             bank_stream(N, seed, 6)) +
         ["P 0 4 1", "P 1 0 1", "P 2 0 1", "P 3 0 1", "P 4 2 1", "P 5 0 1"],
         "underrun", "repeat_last_bank", "O1_holds")
@@ -180,14 +182,14 @@ def build_runs():
     # -- reset in the middle, and a reload with a new seed
     N, seed = 16, 0x1234
     add("reset_midstream",
-        [f"R reset_midstream q {N} {seed} 2"] + bank_recs(
+        [f"R reset_midstream q {N} {seed:x} 2"] + bank_recs(
             bank_stream(N, seed, 3)) +
         [f"P 0 {qual_idle(N)} 1", "X 3", f"P 1 {qual_idle(N)} 1"],
         "reset", "qualified")
 
     N, seed = 12, 0x77
     add("load_midstream",
-        [f"R load_midstream q {N} {seed} 2"] + bank_recs(
+        [f"R load_midstream q {N} {seed:x} 2"] + bank_recs(
             bank_stream(N, seed, 3)) +
         [f"P 0 {qual_idle(N)} 1",
          # The load carries the same seed, so the stream restarts identically and
@@ -244,7 +246,23 @@ def guard_runs(runs, all_banks):
 
     for name, recs, _tags in runs:
         head = recs[0].split()
-        N, seed = int(head[3]), int(head[4])
+        # HEX, because the bench reads the field with `%h`. Parsing it as decimal
+        # here is what allowed a decimal emission to pass this guard while loading
+        # the DUT with a different seed; `seed_encoding` below catches that, and it
+        # exists because the corpus shipped with exactly that defect.
+        N, seed = int(head[3]), int(head[4], 16)
+
+        # The seed the bench will load must be the seed the banks were built from.
+        # Single-digit seeds make decimal and hex agree, which is how the defect
+        # hid: every run with a multi-digit seed mismatched in simulation, and this
+        # guard stayed silent because it made the same decimal assumption.
+        b0 = next((r for r in recs if r.startswith("B 0 ")), None)
+        if b0 is not None:
+            if permuted_order(N, seed) != [int(x) for x in b0.split()[2:]]:
+                problems.append(
+                    f"{name}: the seed field is not the seed its banks came from")
+            else:
+                caught.setdefault("seed_encoding", name)
 
         for r in recs:
             if not r.startswith("B "):
@@ -287,7 +305,7 @@ def main():
     all_banks = {}
     for name, recs, _tags in runs:
         head = recs[0].split()
-        N, seed = int(head[3]), int(head[4])
+        N, seed = int(head[3]), int(head[4], 16)
         nb = sum(1 for r in recs if r.startswith("B "))
         all_banks[name] = bank_stream(N, seed, max(nb, 1)) if N <= 256 else [[0]]
 
@@ -340,6 +358,8 @@ def main():
     print(f"srcshuf_edge.txt: {len(runs)} runs, {nbank} banks, {passes} passes")
     print(f"  {len(MANDATORY)} mandatory categories all present")
     print(f"  draws match observer_prng.txt  (first: {caught.get('prng_prefix')})")
+    print(f"  the seed field is the seed the banks came from"
+          f"  (first: {caught.get('seed_encoding')})")
     print(f"  the bank-isolation mutant is a permutation AND a different bank")
     print(f"    (first: {caught.get('bank_isolation_mutant')})")
     print("    -> O1 cannot see it; only the per-ask comparison can")
