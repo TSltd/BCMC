@@ -270,15 +270,39 @@ so the sequence is produced by keeping one register and advancing it by a consta
 Core's prefix accumulator and *exactly* the Evaluator's wrap. `a` is a constant
 register, `b` an initial value, and no multiply appears anywhere.
 
-The realisation follows, and the detail that matters is the width:
+The realisation follows, and two details matter — the width, and when the
+accumulator is allowed to move:
 
 ```text
-    wire [VAL_W:0] inc = r_q + a;                       // VAL_W+1 bits
-    wire [VAL_W-1:0] nxt = (inc >= N) ? inc - N : inc;  // the wrap, again
-    assign ts_pi = (ts_t == 0) ? b : nxt;
+    wire [VAL_W:0]   inc   = cur_q + a;                     // VAL_W+1 bits
+    wire [VAL_W-1:0] nxt   = (inc >= N) ? inc - N : inc;    // the wrap, again
+    wire             moved = (ts_t != ts_t_q);              // the enable
+
+    assign ts_pi = (ts_t == 0) ? b : (moved ? nxt : cur_q);
 ```
 
-**`inc` is `VAL_W + 1` bits, not `VAL_W`.** With `r_q <= N-1` and `a <= N-1` the
+with `cur_q <= ts_pi` and `ts_t_q <= ts_t` on every clock. `cur_q` is pi of the
+step last asked about; `ts_t_q` is the previous cycle's `ts_t`.
+
+**The answer must be stable when the same step is asked about twice, and that is
+what `moved` is for.** The engine asks about `ts_t` on *every* cycle and latches
+the answer only on the cycles it advances, so most asks repeat the previous one.
+An accumulator advanced by its own output every clock walks forward on all of
+them, and desynchronises at the first cycle without a trigger — the normal case,
+not a corner. `ts_t` changes exactly when the engine's cursor moves, so a change
+in `ts_t` *is* the advance enable, and it is the only enable a two-wire seam
+provides: there is no `ts_ack`. `validation/traversal_sources.py` models this as
+`AffineSource.tick`, and the negative control — accumulating without the
+detector — errs on the first gap.
+
+That in turn constrains the engine, and it is the one thing §8.2 gets wrong:
+**`ts_t` must be 0 while the engine is IDLE.** Otherwise a pass that begins after
+another one has ended asks about step 1 while its cursor is at step 0, and takes
+the wrong column on its first visit. The engine must drive
+`ts_t = (state == IDLE) ? 0 : t_next`, which is the same distinction it already
+made between `pi_at_start` and `t_next` before the seam existed.
+
+**`inc` is `VAL_W + 1` bits, not `VAL_W`.** With `cur_q <= N-1` and `a <= N-1` the
 sum can reach `2N - 2`, which overflows `VAL_W` bits for any `N` above
 `2^(VAL_W-1)`. Reducing in `VAL_W` bits would produce a wrong column for large `N`
 and a *correct* one for all the small `N` a testbench is likely to use first,
@@ -337,11 +361,11 @@ affine family is deterministic in a specified way rather than in a new one:
 
 ### 4.4 It is not instantly ready, and that is part of the contract
 
-The affine source keeps `a_q`, `b_q`, `r_q` and `t_last_q`, and `(a_q, b_q)` are
+The affine source keeps `a_q`, `b_q`, `cur_q` and `ts_t_q`, and `(a_q, b_q)` are
 **computed from the seed**, off the per-visit path: the rejection draws and the
 Euclid take as many cycles as they take. So `SEED_READY` is **not** permanently
-high for this source either — it clears when a seed or a source is written and
-sets once `(a, b)` exist (and `a` is known coprime to the current `N`).
+high for this source either — it clears when a seed, a source **or `N`** changes,
+and sets once `(a, b)` exist (and `a` is known coprime to the current `N`).
 
 Two consequences worth stating, because both shape a driver:
 
@@ -354,6 +378,15 @@ Two consequences worth stating, because both shape a driver:
   even the identity's, whose readiness cannot fail. That looks wasteful for the
   identity and is deliberate: a source-dependent rule would make E4
   source-dependent, and a rule that is uniform is a rule that can be stated once.
+- **A change in `N` invalidates readiness too**, and this was missing from the
+  first draft of this list — the RTL found it. `gcd(a, N) = 1` is a property of
+  the *pair*, so `a` that was coprime to the old `N` need not be coprime to the
+  new one; and `N` is not in this module's register window at all. It arrives from
+  the core over the observation sideband, so a core write that shortens the row
+  could leave `a` sharing a factor with the new `N` and the traversal would stop
+  being a bijection while every register read still looked correct. The affine
+  source therefore watches `N` itself rather than trusting a writer to pulse
+  `load`, and the register window's `load` pulse covers the seed and the selector.
 
 ### 4.5 Why the affine family is *not* pinned in `docs/Observers.md`
 
@@ -665,10 +698,20 @@ declares its own interface and the window's mux ties the differences.
         input  wire [VAL_W-1:0] ts_pi,     // NEW: pi(ts_t)
         ...);
 
-    assign ts_t = t_next;                  // was: the identity, computed here
+    // 0 while IDLE, t_next otherwise -- NOT simply t_next. See 4.2: a restart
+    // asks about step 0, and the source's accumulator reloads on that ask.
+    assign ts_t = (state_q == STATE_IDLE) ? {VAL_W{1'b0}} : t_next;
     ...
     col_q <= ts_pi;                        // was: col_q <= t_next / pi_at_start
 ```
+
+The `ts_t` expression is the part §8.2 got wrong in its first draft, and the
+correction is not cosmetic: with `ts_t = t_next` during IDLE, a pass that starts
+after another has ended asks about step 1 while its cursor is at step 0, and the
+first visit of the restart takes the wrong column. Driving 0 in IDLE is also what
+lets `col_q <= ts_pi` replace *both* of the two old expressions, `pi_at_start` and
+`t_next`: at a start the source answers step 0 by definition, so the engine no
+longer needs a separate `pi_at_start` path.
 
 ### 8.3 The window, which owns the selector and the mux
 
@@ -796,25 +839,44 @@ is structural, while "a shuffled visit costs one bank read" is a count.
 13. **Each source declares only the interface it uses** (§8.1), so no lint waiver
     hides an unused input.
 
-### Corrected by the model
+### Corrected by the model, and then by the RTL
 
-These are the two the model found, and they are recorded here because a document
-that quietly absorbs a correction teaches nothing:
+These are recorded because a document that quietly absorbs a correction teaches
+nothing. Fourteen and fifteen came from `validation/traversal_sources.py`; sixteen
+to eighteen came from writing `rtl/bcmc_src_affine.v`, which is the point at which
+a specification stops being prose.
 
 14. **§4.2's incremental form has an unstated precondition, `a < N`.** One
     conditional subtract reduces a sum below `N` only if the sum was below `2N`.
     §4.3 satisfies it by construction, but the form is not *equivalent* to the
     closed form without it, and a step carried over from a larger `N` would walk
     the wrong permutation while satisfying every type in the RTL. Now stated in
-    §4.2, enforced in the model, and owed an assertion in the RTL.
+    §4.2, enforced in the model, and asserted in the RTL.
 15. **§7.3's original rationale for the repeat-on-underrun rule was wrong as
     stated.** "Serving a half-filled bank would not be [a bijection]" is true only
     for a bank written as a *result*. An in-place shuffle is a permutation at every
     intermediate step, so a partial bank taken from one is a valid bijection and
     **O1 cannot detect it** — a silent failure. §5.2 now fixes the construction as
-    in-place, and §7.3's conclusion stands for the correct reason: the repeat rule
-    is the only choice that does not depend on an implementation detail nothing
-    else observes.
+    in-place, and §7.3's conclusion stands for the correct reason.
+16. **§4.2's realisation was missing its enable.** `assign ts_pi = ... : nxt;`
+    advances the accumulator on every cycle, and the engine asks about `ts_t` on
+    every cycle while latching only when it advances — so the accumulator walks
+    forward through every gap between visits and desynchronises at the first one.
+    The fix is `moved = (ts_t != ts_t_q)`, which is the only advance enable a
+    two-wire seam has; without it a *delayed* trigger gives wrong columns on the
+    first visit after the delay. This is the strongest argument in this document
+    against adding machinery: the seam's enable is not something that was decided,
+    it is something the arithmetic forces.
+17. **§8.2's `assign ts_t = t_next;` is wrong during IDLE.** A pass beginning
+    after another has ended asks about step 1 while its cursor is at step 0, so its
+    first visit takes the wrong column. It must be `0` in IDLE — which also lets
+    `col_q <= ts_pi` replace both of the pre-seam expressions, `pi_at_start` and
+    `t_next`, since at a start the source answers step 0 by definition.
+18. **§4.4's readiness-clearing list was incomplete: it must include a change in
+    `N`.** `gcd(a, N) = 1` is a property of the pair, and `N` is not a register in
+    this window — it arrives from the core over the observation sideband. A core
+    write that shortened the row could leave `a` sharing a factor with the new `N`
+    and the traversal would silently stop being a bijection.
 
 ### Remaining, and who decides
 
@@ -828,13 +890,22 @@ that quietly absorbs a correction teaches nothing:
 
 ### Status
 
-Sections 1 to 8 are **specification**, corrected twice by
-`validation/traversal_sources.py` and held by
-`validation/test_traversal_sources.py` — 211 checks across the three layers, with
-four mutants caught and one documented gap. The five earlier findings remain on
-the record: §2 declined to spend a requalification that was available, §5.4
-corrects one the architecture document made, and §6.4 records a coupling invisible
-until the frozen corpus was read carefully. The model has run; the RTL is next.
+Sections 1 to 8 are **specification**, corrected five times: twice by
+`validation/traversal_sources.py` (which is held by
+`validation/test_traversal_sources.py` — 211 checks across the three layers, four
+mutants caught, one documented gap) and three times by writing
+`rtl/bcmc_src_affine.v`. The five earlier findings remain on the record: §2
+declined to spend a requalification that was available, §5.4 corrects one the
+architecture document made, and §6.4 records a coupling invisible until the
+frozen corpus was read carefully.
+
+`rtl/bcmc_src_affine.v` exists and is **unverified**: its derivation algorithm has
+been checked against `derive_ab` — 315 (seed, N) pairs agree on `(a, b)`, and all
+216 pairs where the draw count is fixed agree on the number of draws consumed —
+and it is lint-clean under Verilator `-Wall`, but **no simulation has run against
+it**. The next artefacts are its testbench, the identity and shuffled sources, and
+then the two-port engine change of §8.2, whose obligation is the strictest in the
+phase: every v2.0a suite must pass *unchanged* afterwards.
 
 The gap is worth naming plainly, because it is the one thing the suite cannot
 check: an in-place partial bank is invisible to O1, so **the "repeat a complete
