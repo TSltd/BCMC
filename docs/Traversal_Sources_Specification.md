@@ -839,6 +839,84 @@ the selector is written. It is the right place for all of it because the selecto
 and the seed registers already live there (§6.1), and because the alternative —
 putting them in the engine — is what §1.2 rejected.
 
+### 8.4 The window, precisely
+
+This is the contract `rtl/bcmc_obs_wb.v` must implement and the model must
+falsify. It is written here rather than in `docs/Observer_Register_Map.md` because
+that document's sections 6 and 9 are **frozen**: a selector and three registers are
+an *addition* to a frozen contract, and additions get a discovered defect or an
+explicit revision, not an edit. §6.1–§6.5 above state what is added; this states
+how it behaves.
+
+**1. The selector is a register, and a refused value leaves it alone.** `0`
+identity, `1` affine, `2` shuffled. A write carrying `3` is refused as E1 (§6.1)
+and, being refused, writes *nothing* — including not clearing the rest of
+`OBS_CTRL`, which is the frozen rule for refusals and the reason `STEP | ONESHOT`
+must be carried.
+
+**2. The mux selects two wires and clocks nothing.** `ts_pi` and `ready` are muxed
+by the selector; nothing else is. All three sources are instantiated and clocked
+always, and an unselected source keeps its own state — which is why a pass on the
+affine does not disturb a shuffled fill. The mux is combinational and adds no cycle.
+
+**3. `load` goes to all three, and only a write that earns it pulses it.**
+  * an accepted write to `OBS_SEED` always pulses, even if the value is unchanged:
+    the seed is opaque 32 bits and "same value" is not the window's call;
+  * an accepted `OBS_CTRL` write pulses only when the selector field **changes**,
+    so re-stating the current selector — which every `STEP` does — does not discard
+    a filled bank and stall the stream;
+  * a change in `N` pulses as well. `N` is not a register here; it arrives over the
+    observation sideband, so the window registers a copy and compares. Finding 26
+    below is why this is not optional.
+
+**4. `OBS_A`/`OBS_B` are the affine source's, regardless of the selector, and zero
+before it is ready.** The register exists to make §4.3's construction inspectable
+without simulating the device; gating it on the selector would make it useless
+exactly when a driver is deciding whether to select the affine. For selectors `0`
+and `2` it therefore reads a derivation that is not meaningful for that pass — said
+plainly rather than promised. Reading `0` means "not derived yet", which is how a
+driver tells absence from a real `a`.
+
+**5. `SEED_READY` is the selected source's `ready`; `SEED_UNDERRUN` is the OR of all
+three.** Bit 3 of `OBS_STATUS` is the muxed level; bit 4 reports that a bank was
+missed *somewhere* rather than attributing it. Both are RW1C beside the existing
+sticky bits, and the wrapper latches the level into its own bit — so clearing while
+the level is still high re-asserts on the next cycle, which is what a level-backed
+RW1C bit must do.
+
+**6. Identity compatibility is a requirement, not an observation.** With the
+selector at `0` the window must be **transparent**: every v2.0a behaviour,
+expectation and corpus must hold with the window in the path. This is the window's
+analogue of §1.1's seam obligation, and it is checked the same way — the frozen
+`obswb_edge.txt`, unchanged.
+
+**7. Finding 26: the shuffled source must also clear readiness on a change in `N`.**
+§4.4 lists a change in `N` for the *affine*, because `gcd(a, N) = 1` is a property
+of the pair. The shuffled source has a stronger reason: **its bank is a permutation
+of the `N` it was filled for**, so if `N` grows while a filled bank survives, a pass
+reads entries that are not part of a permutation of the new `N` and **O1 fails** — a
+proven, unconditional property broken by a core write. The sequence is ordinary:
+`N` changes, the context write clears `VALID`, the Core reconstructs, `VALID` rises,
+and at the end of it `ready` is still latched high from before. So
+`rtl/bcmc_src_shuffled.v` must clear its readiness latch on a change in `N` exactly
+as `rtl/bcmc_src_affine.v` does. This is a change to **verified** RTL, which the
+project permits only for a discovered defect or an explicit revision — and it is a
+discovered defect.
+
+**8. P4 is a separate obligation, and this window does not satisfy it.** Selecting a
+source and watching the traversal change proves the mux switches. P4 — two
+traversals of one matrix producing the same *multiset* of observations — is an
+application-level property of the pair, tested after the window as its own thing, or
+the mux test would be mistaken for it.
+
+**9. The window model composes the sources; it does not reimplement them.** The
+window is a control contract. Its model must be able to state, per cycle, which
+source was selected, whether it was ready, what `ts_pi` the mux presented, and which
+write caused which load or readiness transition — using the already-verified source
+models for the answers. A window model that recomputed a bank or a generator draw
+would be a second implementation of something already proven, and would falsify
+nothing about the window.
+
 ---
 
 ## 9. What v2.0c does not solve
@@ -1036,6 +1114,13 @@ a specification stops being prose.
     answer which pass was starved, and one starvation would make every later pass
     report one. §7.3 now states the level, and the wrapper owns the sticky
     software view by latching it into its own RW1C bit.
+26. **The shuffled source must clear readiness on a change in `N` too.** §4.4 lists
+    that condition for the *affine*, where `gcd(a, N) = 1` is a property of the
+    pair. The shuffled source has a stronger reason: its bank is a permutation of
+    the `N` it was filled for, so a growing `N` with a surviving bank makes a pass
+    read entries outside a permutation of the new `N` and **breaks O1** — an
+    unconditional property — by a core write. §8.4 item 7. The RTL fix is owed, and
+    it is a change to verified RTL, admitted here on the defect route.
 
 ### Remaining, and who decides
 
