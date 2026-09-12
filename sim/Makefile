@@ -17,7 +17,8 @@
 #     make context  # just bcmc_context (storage and arbitration, no maths)
 #     make wb       # just bcmc_wb      (the whole tree, seen from the bus)
 #     make observer # just bcmc_observer (the traversal cursor, cycle by cycle)
-#     make observer_wb # just bcmc_obs_wb (the register window, on the bus)
+#     make observer_wb # just bcmc_obs_wb (the register window, on the bus):
+#                    #   the smoke sequence, then the conformance corpus
 #     make soak     # the optional big files from gen_vectors.py --big
 #     make waves    # run one small file per testbench and dump waves/*.vcd
 #     make gtkwave  # ... and open the core trace
@@ -38,7 +39,7 @@ BUILDDIR := build-icarus
 # and the vector files it must pass. Adding a module means adding a stanza,
 # not editing the rules.
 TOPS       := tb_core tb_cell tb_row tb_column tb_context tb_wb tb_observer \
-              tb_observer_wb_smoke
+              tb_observer_wb_smoke tb_observer_wb
 
 # bcmc_row and bcmc_column are replication of bcmc_cell, and their testbenches
 # instantiate a SECOND, separate cell to prove it, so the cell is in both lists.
@@ -70,6 +71,11 @@ RTL_tb_observer := $(RTLDIR)/bcmc_observer.v $(RTLDIR)/bcmc_column.v \
 # cell all come with it; nothing above it is under test here.
 RTL_tb_observer_wb_smoke := $(RTLDIR)/bcmc_obs_wb.v $(RTLDIR)/bcmc_observer.v \
                             $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v
+
+# The same device as the smoke bench, replayed against the conformance corpus
+# instead of a hand-written sequence. Same list, because it is the same block.
+RTL_tb_observer_wb := $(RTLDIR)/bcmc_obs_wb.v $(RTLDIR)/bcmc_observer.v \
+                      $(RTLDIR)/bcmc_column.v $(RTLDIR)/bcmc_cell.v
 
 VEC_tb_core    := vectors/core_edge.txt \
                   vectors/core_random.txt \
@@ -112,6 +118,12 @@ VEC_tb_observer := vectors/obshw_edge.txt
 # PASS line, and a bench that ran nothing must not look like a success.
 VEC_tb_observer_wb_smoke := vectors/obshw_edge.txt
 
+# The register window's conformance corpus, from gen_observer_wb_vectors.py,
+# which records validation/observer_periph.py answering
+# docs/Observer_Register_Map.md. Same shape as the observer's files: inputs with
+# the model's declared outputs beside them, one run per header.
+VEC_tb_observer_wb := vectors/obswb_edge.txt
+
 # Which generator makes each testbench's vectors, so that a missing file can
 # say how to produce it rather than merely that it is absent.
 GEN_tb_core    := gen_vectors.py
@@ -121,6 +133,8 @@ GEN_tb_column  := gen_vectors.py
 GEN_tb_context := gen_vectors.py
 GEN_tb_wb      := gen_wb_vectors.py
 GEN_tb_observer := gen_observer_hw_vectors.py
+GEN_tb_observer_wb_smoke := gen_observer_hw_vectors.py
+GEN_tb_observer_wb := gen_observer_wb_vectors.py
 
 SOAK_MATRIX    := vectors/matrix_exhaustive_6.txt \
                   vectors/matrix_random_5k.txt
@@ -133,6 +147,7 @@ SOAK_tb_context := $(SOAK_MATRIX)
 SOAK_tb_wb      :=
 SOAK_tb_observer :=
 SOAK_tb_observer_wb_smoke :=
+SOAK_tb_observer_wb :=
 
 WAVE_tb_core    := vectors/core_edge.txt
 WAVE_tb_cell    := vectors/cell_edge.txt
@@ -142,6 +157,7 @@ WAVE_tb_context := vectors/matrix_edge.txt
 WAVE_tb_wb      := vectors/wb_sequences.txt
 WAVE_tb_observer := vectors/obshw_edge.txt
 WAVE_tb_observer_wb_smoke := vectors/obshw_edge.txt
+WAVE_tb_observer_wb := vectors/obswb_edge.txt
 
 # tb_cell holds a whole suite in memory so that it can replay it in three
 # different orders. The array size is a compile time choice in Verilog-2005,
@@ -240,7 +256,7 @@ wb: run-tb_wb
 
 observer: run-tb_observer
 
-observer_wb: run-tb_observer_wb_smoke
+observer_wb: run-tb_observer_wb_smoke run-tb_observer_wb
 
 soak: $(addprefix soak-,$(TOPS))
 
