@@ -157,6 +157,14 @@ step "6/12  the hardware observer engine satisfies its specification"
 # assigns to the harness layer must differ from the corpus somewhere.
 ( cd validation && python3 gen_out_engine_vectors.py ) || die "gen_out_engine_vectors.py"
 
+# The v2.0c traversal sources: the model and the suite that attacks it. The
+# model is written from docs/Traversal_Sources_Specification.md in order to
+# falsify it, in the same three layers the document is built from -- pure source
+# functions, stateful preparation, composition -- so that a failure says which
+# layer it came from. It found two defects in the document on first run.
+( cd validation && python3 traversal_sources.py ) || die "validation/traversal_sources.py"
+( cd validation && python3 test_traversal_sources.py ) || die "test_traversal_sources.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from

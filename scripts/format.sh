@@ -38,7 +38,8 @@ mapfile -t FILES < <(
        validation/gen_observer_wb_vectors.py \
        validation/replay_observer_wb.py \
        validation/output_engine.py validation/test_output_engine.py \
-       validation/gen_out_engine_vectors.py 2>/dev/null
+       validation/gen_out_engine_vectors.py \
+       validation/traversal_sources.py validation/test_traversal_sources.py 2>/dev/null
 )
 
 status=0
