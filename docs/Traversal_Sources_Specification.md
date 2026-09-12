@@ -610,6 +610,26 @@ selected source reports itself ready. The recovery time is the source's business
 and is therefore source-dependent — one cycle for the identity, a few for the
 affine (once `(a, b)` exist), `LEAD * c_fill(N)` for the shuffled source.
 
+**Corrected when the identity source was written: the uniform part is the
+window's, not the sources'.** The sentence above, read literally, asks the
+identity to implement a one-cycle recovery — and §8.1 gives the identity no
+`clk`, no `rst` and no `ready` port, because `pi(t) = t` is a function and a
+function of its argument needs no time. A source that cannot count a cycle cannot
+have a recovery time. So the split is:
+
+  * **the window owns the uniform recovery** — a write to `OBS_SEED`, the
+    selector, or `N` clears the window's readiness latch for one cycle, for every
+    source, which is what makes §7.2's rule uniform *by construction* rather than
+    by three independent implementations agreeing;
+  * **a source owns the rest** — the affine's derivation and the shuffled
+    source's lead, reported on its own `ready`, which the window ANDs with the
+    latch.
+
+The identity's contribution to that AND is a constant `1`, which is also why
+§8.1's table is right to give it no `ready` port. This is a layering correction
+rather than a behaviour change: the observable is exactly what §7.2 describes,
+and it is now stated where it can be implemented.
+
 ### 7.2 The rule is uniform, and that is decision 10
 
 `SEED_READY` gates **START for every source**, not only the buffered one. The
@@ -712,6 +732,20 @@ first visit of the restart takes the wrong column. Driving 0 in IDLE is also wha
 lets `col_q <= ts_pi` replace *both* of the two old expressions, `pi_at_start` and
 `t_next`: at a start the source answers step 0 by definition, so the engine no
 longer needs a separate `pi_at_start` path.
+
+**One assertion moves with the change.** `rtl/bcmc_observer.v` currently checks
+`col_q == t_q` while it is in RUN, commented as "the one line a v2.0c source will
+legitimately change". That is only true *because* the identity is what is wired to
+the seam — it is the identity-specific corollary of
+
+```text
+    col_q == ts_pi
+```
+
+which holds for every source and is the actual invariant. So the check is not
+deleted when the seam is filled; it is **generalised**, in the engine, at the same
+time. Nothing about it moves into the identity source: a module that cannot see a
+cursor, a clock or a column cannot assert anything about one.
 
 ### 8.3 The window, which owns the selector and the mux
 
@@ -877,6 +911,14 @@ a specification stops being prose.
     this window — it arrives from the core over the observation sideband. A core
     write that shortened the row could leave `a` sharing a factor with the new `N`
     and the traversal would silently stop being a bijection.
+19. **§7.1 asked the identity source to count a cycle, and §8.1 gives it no
+    clock.** Found by writing `rtl/bcmc_src_identity.v`: the module is one
+    `assign`, and a source with no clock cannot have a one-cycle recovery time.
+    The uniform recovery is therefore the *window's* — which is what lets §7.2's
+    rule be uniform by construction rather than by three implementations
+    agreeing. §7.1 now states the split, and §8.1's interface is unchanged: the
+    identity still declares no `clk` and no `ready`, because its contribution to
+    the window's AND is a constant `1`.
 
 ### Remaining, and who decides
 

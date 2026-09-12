@@ -355,6 +355,14 @@ class IdentitySource(Source):
     of the few places the specification deliberately models a behaviour that has
     no cause.
 
+    Where that recovery belongs: this `ready()` models the **window's** uniform
+    rule, not the module's. `rtl/bcmc_src_identity.v` is one `assign` with no
+    clock and no `ready` port, because `pi(t) = t` is a function and a function of
+    its argument cannot be late -- so the one-cycle recovery after a load is the
+    register window's latch, ANDed with each source's own `ready`. Modelling it
+    here keeps the *system* observable in one place; it is not a claim that the
+    module implements it. (Found by writing the module; section 7.1 now says so.)
+
     >>> s = IdentitySource(4)
     >>> s.ready()
     False
