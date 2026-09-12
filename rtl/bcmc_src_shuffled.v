@@ -209,9 +209,14 @@ module bcmc_src_shuffled #(
     // is a vector and the writes are a single expression.
     wire [DEPTH-1:0] f_m_i  = {{(DEPTH-1){1'b0}}, 1'b1} << f_iaddr;
     wire [DEPTH-1:0] f_m_j  = {{(DEPTH-1){1'b0}}, 1'b1} << f_jaddr;
+    // The clear mask for the bank being filled, and the halves are not
+    // interchangeable: bank 0's entries are addresses 0 .. BANK_N_MAX-1, so bank
+    // 0 is the LOW half. Getting this backwards clears the bank that is about to
+    // be read -- which reads as its own index thereafter, i.e. as an identity
+    // traversal, and no check but this one would say so.
     wire [DEPTH-1:0] f_bclr = f_empty_bank
-                            ? {{BANK_N_MAX{1'b0}}, {BANK_N_MAX{1'b1}}}
-                            : {{BANK_N_MAX{1'b1}}, {BANK_N_MAX{1'b0}}};
+                            ? {{BANK_N_MAX{1'b1}}, {BANK_N_MAX{1'b0}}}   // bank 1: high
+                            : {{BANK_N_MAX{1'b0}}, {BANK_N_MAX{1'b1}}};  // bank 0: low
 
     wire [0:0] f_empty_bank = (st0_q == ST_EMPTY) ? 1'b0 : 1'b1;
     wire       f_any_empty  = (st0_q == ST_EMPTY) || (st1_q == ST_EMPTY);
@@ -423,6 +428,24 @@ module bcmc_src_shuffled #(
                 $display("bcmc_src_shuffled: ERROR shuffle index %0d > N-1 = %0d",
                          i_q, N - {{(VAL_W-1){1'b0}}, 1'b1});
                 $stop;
+            end
+            // The clear must cover the bank being FILLED and must not touch the
+            // bank being READ. The two halves of the mask are easy to mix up, and
+            // the only symptom is that the traversal silently becomes the identity
+            // -- which is what the corpus reported, with no other clue. This was
+            // written after getting it wrong, so it checks the one bit of each half
+            // rather than trusting the reading of a replication.
+            if (f_can_start) begin
+                if (f_bclr[f_empty_bank ? BANK_N_MAX : 0] !== 1'b1) begin
+                    $display("bcmc_src_shuffled: ERROR the fill clear does not cover");
+                    $display("  bank %0d, which is the one being filled", f_empty_bank);
+                    $stop;
+                end
+                if (readable && (f_bclr[read_bank ? BANK_N_MAX : 0] !== 1'b0)) begin
+                    $display("bcmc_src_shuffled: ERROR the fill clear would wipe bank");
+                    $display("  %0d, which the read path is using", read_bank);
+                    $stop;
+                end
             end
         end
     end
