@@ -40,7 +40,8 @@ mapfile -t FILES < <(
        validation/output_engine.py validation/test_output_engine.py \
        validation/gen_out_engine_vectors.py \
        validation/traversal_sources.py validation/test_traversal_sources.py \
-       validation/gen_src_affine_vectors.py 2>/dev/null
+       validation/gen_src_affine_vectors.py \
+       validation/gen_src_shuffled_vectors.py 2>/dev/null
 )
 
 status=0
