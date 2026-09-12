@@ -1036,13 +1036,14 @@ a specification stops being prose.
 
 ### Status
 
-Sections 1 to 8 are **specification**, corrected ten times: twice by
+Sections 1 to 8 are **specification**, corrected twelve times: twice by
 `validation/traversal_sources.py` (held by `validation/test_traversal_sources.py`
 — 219 checks across the three layers, four mutants caught, one documented gap),
 once by the model again while starting the shuffled source (finding 22), three
 times by writing `rtl/bcmc_src_affine.v`, once by writing
-`rtl/bcmc_src_identity.v`, and three times by starting
-`rtl/bcmc_src_shuffled.v` (20, 21, 23). The five earlier findings remain on the
+`rtl/bcmc_src_identity.v`, three times by starting
+`rtl/bcmc_src_shuffled.v` (20, 21, 23), and twice by holding that module against
+its bench (24, 25). The five earlier findings remain on the
 record: §2 declined to spend a requalification that was available, §5.4 corrects
 one the architecture document made, and §6.4 records a coupling invisible until
 the frozen corpus was read carefully.
@@ -1060,10 +1061,25 @@ is one `assign`, and a bench that drives `ts_t` and checks `ts_pi == ts_t` would
 test it against itself. Its verification is the seam regression, where the identity
 wired to `bcmc_observer.v` must reproduce the v2.0a trace exactly.
 
-`rtl/bcmc_src_shuffled.v` is **not written yet**; the specification corrections it
-forced are the subject of §5.5, and the source comes next. Then the two-port engine
-change of §8.2, whose obligation is the strictest in the phase: every v2.0a suite
-must pass *unchanged* afterwards.
+`rtl/bcmc_src_shuffled.v` is **verified**: 13 runs, 36 passes, 1609 asks and
+11112 checks green under `sim/tb_src_shuffled.v`, an independent Icarus bench that
+polls `ready` rather than counting to it — there is no promised fill cycle count —
+and derives each pass's expected bank from the observed handoff rather than from a
+recorded schedule. Its negative control, `scripts/mutate_bank_isolation.sh`, plants
+the very fault §5.5 says the corpus must not be able to see — a shuffle write that
+addresses the bank being read — and requires the run to detect it. It does, and the
+mutant elaborates cleanly, so the control is runtime-only as intended.
+
+Reaching that took five revisions and seven defects, every one found by a consumer
+rather than by reading: the written-mask was `X`; the generation tag aliased after
+two fills; the clear wiped the bank being read; the first pass boundary was
+consumed without switching banks; `underrun` was a latch where the depth-2
+arithmetic needs a level; the corpus wrote the seed in decimal while the bench read
+it as hex, which passed only for single-digit seeds; and a re-seed did not clear
+the boundary detector. Findings 20 to 25 are the specification's share of it.
+
+Then the two-port engine change of §8.2, whose obligation is the strictest in the
+phase: every v2.0a suite must pass *unchanged* afterwards.
 
 The gap is worth naming plainly, because it is the one thing the suite cannot
 check: an in-place partial bank is invisible to O1, so **the "repeat a complete
