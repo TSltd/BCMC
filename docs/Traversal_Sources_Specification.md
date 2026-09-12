@@ -885,10 +885,14 @@ the level is still high re-asserts on the next cycle, which is what a level-back
 RW1C bit must do.
 
 **6. Identity compatibility is a requirement, not an observation.** With the
-selector at `0` the window must be **transparent**: every v2.0a behaviour,
-expectation and corpus must hold with the window in the path. This is the window's
-analogue of §1.1's seam obligation, and it is checked the same way — the frozen
-`obswb_edge.txt`, unchanged.
+selector at `0` the window must be **transparent**: every v2.0a behaviour and
+expectation must hold with the window in the path. This is the window's analogue
+of §1.1's seam obligation, and it is checked the same way — by replay. With one
+qualification, which Finding 27 records in full: `OBS_STATUS` is the single
+register whose *observable meaning* v2.0c changes, so transparency is checked
+against `obswb_v2c_edge.txt` while `obswb_edge.txt` stays frozen and untouched as
+the v2.0a artifact. "Transparent" here means every v2.0a behaviour other than the
+documented additions — not byte-identical register data.
 
 **7. Finding 26: the shuffled source must also clear readiness on a change in `N`.**
 §4.4 lists a change in `N` for the *affine*, because `gcd(a, N) = 1` is a property
@@ -921,6 +925,61 @@ write caused which load or readiness transition — using the already-verified s
 models for the answers. A window model that recomputed a bank or a generator draw
 would be a second implementation of something already proven, and would falsify
 nothing about the window.
+
+**10. Finding 27: the `OBS_STATUS` extension is a register-map version boundary,
+and the frozen corpus cannot be replayed across it.** Item 5 above adds bits 3 and
+4 to `OBS_STATUS`, uniformly for every source (§7.2). Under the identity selector
+`SEED_READY` is therefore high, and an acknowledged read of `0x010` answers with
+bit 3 set where v2.0a answered `0`. The frozen corpus reads `0x010` **twelve
+times**, and `sim/bcmc_obs_wb_test.cpp` compares `wb_dat_o` exactly on every
+acknowledged cycle — so twelve recorded expectations (`0` and `1`) become `8` and
+`9`.
+
+*Classification: not an implementation defect, not a model bug, and not a reason
+to weaken item 5. It is a register-map extension.* This is the cleanest example in
+the phase of the distinction §1.1 draws: v2.0c **changes the observable meaning of
+a register**, and a corpus frozen against the old meaning is a *specification
+version boundary*, not a failed compatibility test. Calling the old corpus's
+replay a failure would be the mistake; so would editing it.
+
+The three responses, with two rejected:
+
+* *Suppress bits 3/4 under a non-buffered selector.* Contradicts item 5 and §7.2:
+  `SEED_READY` is defined as the **muxed** level, for every source, because START's
+  refusal condition (§6.2) applies to every source. A status bit that appeared only
+  for one selection would make the refusal condition's own precondition
+  unreadable.
+* *Edit the twelve values in place.* Mutates a frozen v2.0a artifact, so "frozen"
+  would stop meaning "what it meant when it was frozen", and the checkpoint
+  discipline is lost silently. Rejected.
+* *Keep `obswb_edge.txt` byte-identical and add `sim/vectors/obswb_v2c_edge.txt`.*
+  **Taken.** The old file remains the v2.0a peripheral regression; the new file
+  carries the extended expectations. The peripheral model contract is **versioned
+  rather than rewritten**: the v2.0c model composes the v2.0a model and adds the
+  status semantics.
+
+**The consequence, stated so it is not misread.** The old corpus is **not** replayed
+against the new RTL as though it described the same register map, because the
+acknowledged `OBS_STATUS` value has intentionally changed. Differential verification
+therefore has **two gates, and they make different claims**: `obswb_edge.txt` proves
+the v2.0a artifact is still represented and untouched, and `obswb_v2c_edge.txt`
+proves the v2.0c extension.
+
+**The compatibility claim, and its proof obligation.** What v2.0c asserts is not
+"v2.0a is reproduced bit for bit" but:
+
+> v2.0c preserves all v2.0a behaviour **except for the explicitly documented
+> additions to the observable register contract**, and the only changed old-corpus
+> observations are those documented additions.
+
+That is checkable, and making it checkable is the point. The twelve changes must be
+derived rather than observed: diffing the two corpora, **every** cycle must be
+identical except the acknowledged `0x010` reads, and each of those must equal the
+v2.0a value with `| 0x8` applied because bit 3 is `SEED_READY` (§7.1) — and with
+`| 0x10` as well where a bank was missed. Any difference outside that set, or any
+of those twelve differing by anything but those bits, is a defect and not an
+extension. The twelve `0 → 8` and `1 → 9` changes are thus a **proof obligation**,
+and the proof is that they are exactly and only the documented additions.
 
 ---
 
