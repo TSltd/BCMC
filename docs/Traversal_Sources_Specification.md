@@ -897,11 +897,16 @@ of the `N` it was filled for**, so if `N` grows while a filled bank survives, a 
 reads entries that are not part of a permutation of the new `N` and **O1 fails** — a
 proven, unconditional property broken by a core write. The sequence is ordinary:
 `N` changes, the context write clears `VALID`, the Core reconstructs, `VALID` rises,
-and at the end of it `ready` is still latched high from before. So
-`rtl/bcmc_src_shuffled.v` must clear its readiness latch on a change in `N` exactly
-as `rtl/bcmc_src_affine.v` does. This is a change to **verified** RTL, which the
-project permits only for a discovered defect or an explicit revision — and it is a
-discovered defect.
+and at the end of it `ready` is still latched high from before.
+
+**The correction is item 3's, not the source's.** `validation/observer_window.py`
+demonstrates both halves rather than asserting them: with the window observing `N`,
+the source's readiness drops and no pass can be admitted; without the observation,
+`ready` stays high and the pass is **not a bijection** — for every `N` pair tried
+(4→6, 8→12, 3→5, 16→20). So the minimal fix is the window's `N` observation, which
+pulses `load` and clears the source's readiness *and* its banks, and **no change to
+verified source RTL is required at all.** The affine's own `N` clause (§4.4, finding
+18) stays as it is: belt and braces, and already verified.
 
 **8. P4 is a separate obligation, and this window does not satisfy it.** Selecting a
 source and watching the traversal change proves the mux switches. P4 — two
@@ -1114,13 +1119,16 @@ a specification stops being prose.
     answer which pass was starved, and one starvation would make every later pass
     report one. §7.3 now states the level, and the wrapper owns the sticky
     software view by latching it into its own RW1C bit.
-26. **The shuffled source must clear readiness on a change in `N` too.** §4.4 lists
-    that condition for the *affine*, where `gcd(a, N) = 1` is a property of the
-    pair. The shuffled source has a stronger reason: its bank is a permutation of
-    the `N` it was filled for, so a growing `N` with a surviving bank makes a pass
-    read entries outside a permutation of the new `N` and **breaks O1** — an
-    unconditional property — by a core write. §8.4 item 7. The RTL fix is owed, and
-    it is a change to verified RTL, admitted here on the defect route.
+26. **The shuffled source's readiness must be invalidated by a change in `N`, and
+    the window is what does it.** §4.4 lists that condition for the *affine*,
+    where `gcd(a, N) = 1` is a property of the pair. The shuffled source has a
+    stronger reason: its bank is a permutation of the `N` it was filled for, so a
+    growing `N` with a surviving bank makes a pass read entries outside a
+    permutation of the new `N` and **breaks O1** — an unconditional property — by a
+    core write. §8.4 item 3's `N` observation is the correction, not a source
+    change: `validation/observer_window.py` demonstrates that without it `ready`
+    stays high and the pass is not a bijection, and that with it no pass is
+    admitted. Verified source RTL is therefore untouched.
 
 ### Remaining, and who decides
 
