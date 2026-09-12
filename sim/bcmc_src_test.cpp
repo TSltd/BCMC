@@ -198,7 +198,10 @@ int run_affine(const std::string& path) {
         } else if (r.tag == "W") {
             const std::string where = "W(N=" + std::to_string(m.N) + ")";
             walks++;
-            for (std::size_t i = 0; i < r.words.size(); i++) {
+            for (std::size_t i = 1; i < r.words.size(); i++) {
+                // words[0] is the cycle COUNT, not an ask -- the bench reads it
+                // and then that many values, which is why driving it as a value
+                // costs exactly one extra cycle per walk.
                 const long long t = std::strtoll(r.words[i].c_str(), nullptr, 10);
                 dut.ts_t = static_cast<IData>(t & 0xFFFF);
                 dut.eval();
@@ -290,9 +293,13 @@ int run_shuffled(const std::string& path) {
             for (long long i = 0; i < dec(r, 1); i++) clk();
 
             const long long gap = dec(r, 2);
-            bool saw_new = false, saw_rep = false;
-            bool indist = (cur >= 0) &&
-                          ((cur + 1) < static_cast<long long>(banks.size()));
+            // The verdict is decided ONLY by the asks that carry information: an
+            // ask where the two candidate banks hold the same value cannot say
+            // which bank was read. Counting "did any ask match the new bank" is
+            // too crude -- when a repeat's two candidates coincide at some
+            // position, that ask matches the new bank too, so a plain flag reports
+            // "matched both banks" for a pass that is simply a repeat.
+            long long info_new = 0, info_rep = 0;
             for (long long t = 0; t < N; t++) {
                 dut.ts_t = static_cast<IData>(t & 0xFFFF);
                 for (long long g = 0; g < gap; g++) {
@@ -303,21 +310,25 @@ int run_shuffled(const std::string& path) {
                     if (cur < 0) {
                         check_eq(where, "the first pass is not bank 0", got,
                                  banks[0][t]);
+                    } else if ((cur + 1) >=
+                               static_cast<long long>(banks.size())) {
+                        // The last bank the corpus names: only a repeat is
+                        // possible, so this ask is informative by construction.
+                        info_rep++;
+                        if (got != banks[cur][t])
+                            fail(where, "ts_pi is not the repeated bank");
+                    } else if (banks[cur + 1][t] == banks[cur][t]) {
+                        // Uninformative: both candidates are the same value.
+                        if (got != banks[cur][t])
+                            fail(where, "ts_pi matches neither candidate, which"
+                                        " are equal");
+                    } else if (got == banks[cur + 1][t]) {
+                        info_new++;
+                    } else if (got == banks[cur][t]) {
+                        info_rep++;
                     } else {
-                        const bool new_ok =
-                            ((cur + 1) < static_cast<long long>(banks.size())) &&
-                            (got == banks[cur + 1][t]);
-                        const bool rep_ok = (got == banks[cur][t]);
-                        if (new_ok)      saw_new = true;
-                        else if (rep_ok) saw_rep = true;
-                        else fail(where, "ts_pi is neither the new bank nor the"
-                                         " repeat");
-                        // N = 1 makes every bank [0], so "new" and "repeat" are
-                        // one observation there and the verdict cannot demand
-                        // exactly one. Checked against the corpus: only that run
-                        // is indistinguishable.
-                        if (((cur + 1) < static_cast<long long>(banks.size())) &&
-                            (banks[cur + 1][t] != banks[cur][t])) indist = false;
+                        fail(where, "ts_pi is neither the new bank nor the"
+                                    " repeat");
                     }
                     clk();
                 }
@@ -328,20 +339,24 @@ int run_shuffled(const std::string& path) {
                 if (kind == 0 && dut.underrun)
                     fail(where, "the first pass reported an underrun");
                 cur = 0;
-            } else if (saw_new && !saw_rep) {
+            } else if (info_new && !info_rep) {
                 if (dut.underrun)
                     fail(where, "a new bank was taken but underrun says"
                                 " otherwise");
                 cur++;
-            } else if (saw_rep && !saw_new) {
+            } else if (info_rep && !info_new) {
                 if (kind == 0) fail(where, "a repeat in a qualified run");
                 if (!dut.underrun)
                     fail(where, "a repeat without underrun -- the flag must say"
                                 " so");
-            } else if (indist) {
-                // Indistinguishable, and its asks were checked above.
+            } else if (!info_new && !info_rep) {
+                // Every ask was uninformative: the two candidate banks coincide
+                // everywhere, so which one was read is not observable. N = 1 is
+                // the case that matters -- every bank is [0] -- and its asks were
+                // checked above regardless.
             } else {
-                fail(where, "the pass matched neither bank, or both");
+                fail(where, "the pass read one bank at some asks and the other at"
+                            " others");
             }
 
         } else if (r.tag == "D") {
