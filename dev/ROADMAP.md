@@ -174,13 +174,15 @@ v2.0  -- Hardware Observers
     │   ├── Smoke sequence        [done] sim/tb_observer_wb_smoke.v
     │   └── Tagged                      v2.0a-periph  587933d
     ├── v2.0b  the output engine
-    │   ├── Specification               docs/Output_Engine.md  (not frozen)
-    │   ├── The falsifying model        validation/output_engine.py
-    │   ├── Its obligations as tests    validation/test_output_engine.py
-    │   ├── column_bits -> pins         rtl/bcmc_out_engine.v
-    │   ├── Verilator differential      sim/bcmc_out_engine_test.cpp
-    │   ├── Icarus second opinion       sim/tb_out_engine.v
-    │   └── A pure consumer             no traversal, no mathematics
+    │   ├── Specification           [done] docs/Output_Engine.md
+    │   ├── The falsifying model    [done] validation/output_engine.py
+    │   ├── Its obligations as tests[done] validation/test_output_engine.py
+    │   ├── Corpus, and two guards  [done] validation/gen_out_engine_vectors.py
+    │   ├── column_bits -> pins     [done] rtl/bcmc_out_engine.v
+    │   ├── Verilator differential  [done] sim/bcmc_out_engine_test.cpp
+    │   ├── Icarus second opinion   [done] sim/tb_out_engine.v
+    │   ├── A pure consumer         [done] no traversal, no mathematics
+    │   └── Tagged                        v2.0b  5323eb0
     ├── v2.0c  traversal sources
     │   ├── The seam, filled           identity, affine, shuffled
     │   ├── Affine, streaming          pi(t) = (a t + b) mod N, gcd(a, N) = 1

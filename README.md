@@ -43,8 +43,8 @@ The long-term goal is to establish BCMC as a reusable hardware primitive for det
 
 # Project Status
 
-**Current release:** **v2.0a-periph** (the observer stream); the latest v0.x
-release is **v0.5c**
+**Current release:** **v2.0b** (the observer stream); the latest v0.x release is
+**v0.5c**
 
 ✔ Mathematical specification complete
 
@@ -93,9 +93,9 @@ scheduler and a mains heater controller — each runnable over either reference
 traversal, from three source files rather than six, all against the real
 verilated peripheral and never a software model of it
 
-✔ Hardware observer engine and its register window complete and independently
-verified (`v2.0a`, `v2.0a-periph`); the output engine (`v2.0b`) is specified and
-its falsifying model is next. The Tang Nano 20K demonstration is deferred to v1.0
+✔ Hardware observer engine, its register window, and the output engine complete
+and independently verified (`v2.0a`, `v2.0a-periph`, `v2.0b`). The Tang Nano 20K
+demonstration is deferred to v1.0
 
 ---
 
@@ -465,9 +465,12 @@ and `docs/Hardware_Observer_Architecture.md` for the v2.0a specification.
   model that composes the engine, an adversarial suite, one fixed bus corpus, and
   two independent replays of it — Verilator against the model, Icarus for a
   second opinion. Tagged `v2.0a-periph`.
-- **v2.0b — The output engine.** `column_bits` turned into pins: a pure consumer
-  with no traversal and no mathematics. Specified in `docs/Output_Engine.md`; the
-  falsifying model is next, and no RTL precedes it.
+- **v2.0b — The output engine.** ✔ `column_bits` turned into pins: a pure consumer
+  with no traversal and no mathematics. Specified in `docs/Output_Engine.md`, with
+  a cycle model that falsified three of that specification's own claims before any
+  RTL existed, a stimulus corpus checked to discriminate the wiring faults the
+  model cannot see, and two independent replays of it — Verilator against the
+  model, Icarus for a second opinion. Tagged `v2.0b`.
 - **v2.0c — Traversal sources.** The seam filled: the identity source, a
   streaming affine source, and a buffered seeded Fisher–Yates source with its
   fill bound made explicit.
