@@ -88,7 +88,7 @@ module bcmc_src_shuffled #(
     input  wire [VAL_W-1:0]    ts_t,      // the step the engine is asking about
     output wire [VAL_W-1:0]    ts_pi,     // pi(ts_t), combinational
     output wire                ready,     // SEED_READY (start-up latched)
-    output wire                underrun   // sticky until load: a bank was missing
+    output wire                underrun   // set at a boundary that had to repeat
 );
 
     localparam AW    = $clog2(BANK_N_MAX);     // index bits within a bank
@@ -116,7 +116,6 @@ module bcmc_src_shuffled #(
     reg [1:0]       st0_q;         // bank 0's state
     reg [1:0]       st1_q;         // bank 1's state
     reg             playing_q;     // the bank the read path uses
-    reg             started_q;     // a pass has been admitted at least once
     reg             fill_busy_q;   // a fill is in progress
     reg             fill_bank_q;   // which bank is being filled
     reg [VAL_W-1:0] i_q;           // the shuffle index, N-1 down to 1
@@ -165,8 +164,14 @@ module bcmc_src_shuffled #(
 
     // The first pass plays bank 0; later ones play the other bank, and only if it
     // is complete -- otherwise this is an underrun and the current bank repeats.
-    wire       do_switch = started_q ? (st_other == ST_COMPLETE) : 1'b1;
-    wire       next_bank = started_q ? ~playing_q : 1'b0;
+    // The bank to hand in at the next boundary. `ready` (LEAD banks built)
+    // guarantees both banks are complete before the first pass is admitted, so
+    // there is NO special case for the first pass here -- and there must not be:
+    // an earlier revision initialised `started_q` at the *first* boundary, which
+    // consumed the first wrap without switching and left the second pass
+    // repeating bank 0.
+    wire       do_switch = (st_other == ST_COMPLETE);
+    wire       next_bank = ~playing_q;
     wire       read_bank = (at_boundary && do_switch) ? next_bank : playing_q;
     wire [1:0] st_read   = read_bank ? st1_q : st0_q;
 
@@ -245,7 +250,6 @@ module bcmc_src_shuffled #(
             st0_q       <= ST_EMPTY;
             st1_q       <= ST_EMPTY;
             playing_q   <= 1'b0;
-            started_q   <= 1'b0;
             fill_busy_q <= 1'b0;
             fill_bank_q <= 1'b0;
             i_q         <= {VAL_W{1'b0}};
@@ -266,7 +270,6 @@ module bcmc_src_shuffled #(
             st0_q       <= ST_EMPTY;
             st1_q       <= ST_EMPTY;
             playing_q   <= 1'b0;
-            started_q   <= 1'b0;
             fill_busy_q <= 1'b0;
             fill_bank_q <= 1'b0;
             i_q         <= {VAL_W{1'b0}};
@@ -327,11 +330,7 @@ module bcmc_src_shuffled #(
             // must be the new one combinationally -- which is why `read_bank` above
             // is not simply `playing_q`.
             if (at_boundary) begin
-                if (!started_q) begin
-                    started_q <= 1'b1;
-                    playing_q <= 1'b0;           // the first pass plays bank 0
-                    st0_q     <= ST_PLAYING;
-                end else if (do_switch) begin
+                if (do_switch) begin
                     if (playing_q) begin         // hand the other bank in
                         st1_q <= ST_EMPTY;       // the freed one
                         st0_q <= ST_PLAYING;
@@ -339,7 +338,8 @@ module bcmc_src_shuffled #(
                         st0_q <= ST_EMPTY;
                         st1_q <= ST_PLAYING;
                     end
-                    playing_q <= ~playing_q;
+                    playing_q  <= ~playing_q;
+                    underrun_q <= 1'b0;          // this boundary found its bank
                 end else begin
                     underrun_q <= 1'b1;          // repeat this bank, and say so
                 end
@@ -391,9 +391,8 @@ module bcmc_src_shuffled #(
             // THE INVARIANT, in two forms, because they catch different mistakes.
             //
             // (1) The bank the fill is working on must not be a bank whose content
-            // the read path is using. Gated on `readable` rather than on
-            // `started_q`: a bank in EMPTY is not yet worth protecting, and one in
-            // COMPLETE or PLAYING is.
+            // the read path is using. Gated on `readable`: a bank in EMPTY is not
+            // yet worth protecting, and one in COMPLETE or PLAYING is.
             if (fill_busy_q && readable && (fill_bank_q == read_bank)) begin
                 $display("bcmc_src_shuffled: ERROR filling bank %0d while the read",
                          fill_bank_q);

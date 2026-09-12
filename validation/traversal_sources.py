@@ -570,6 +570,12 @@ class ShuffledSource(Source):
         and it would hide the underrun that section 5.4's rate bound exists to
         predict.
 
+        `underrun_flag` is a *level* for this boundary -- set when the boundary
+        had to repeat, cleared when it found its bank -- and not a sticky latch.
+        A sticky latch could not answer the only question asked of it ("did
+        *this* pass get a fresh bank?"), and the wrapper still gets a sticky
+        software view by latching the level into its own RW1C bit.
+
         >>> s = ShuffledSource(4, 3)
         >>> while not s.ready():
         ...     s.tick()
@@ -585,6 +591,7 @@ class ShuffledSource(Source):
         """
         if self.active is None or len(self.banks) >= 1:
             self.active = self.banks.pop(0)
+            self.underrun_flag = False     # this boundary found its bank
         else:
             self.underrun_flag = True      # repeat the bank already playing
         return self.active

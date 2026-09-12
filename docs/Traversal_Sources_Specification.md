@@ -718,8 +718,16 @@ That single choice means **O1 holds unconditionally**, for every source, in ever
 configuration, including a misconfigured one. The rate bound is therefore not a
 correctness precondition at all — it is a **freshness** precondition, and
 violating it degrades the traversal's smoothness rather than its validity, exactly
-as running too fast would degrade any schedule. `SEED_UNDERRUN` reports it, sticky
-until cleared through the RW1C bit like `DONE` and `ABORTED`.
+as running too fast would degrade any schedule.
+
+`SEED_UNDERRUN` reports it as a **level describing the boundary**: set when a
+boundary had to repeat, cleared when a boundary found its bank. It is **not**
+sticky in the source. A sticky source latch could not answer the only question
+asked of it — *did this pass get a fresh bank?* — and stickiness buys nothing
+anyway, because the wrapper latches the level into its own RW1C bit alongside
+`DONE` and `ABORTED`, which is where the software-visible sticky state belongs.
+(This was a genuine inconsistency in the RTL: its port comment said "sticky until
+load" while this section's per-boundary rule describes a level.)
 
 **What a partial bank would actually do depends on how the bank is built, and the
 model corrected this paragraph's original reasoning.** The first draft said that
@@ -1003,6 +1011,18 @@ a specification stops being prose.
 23. **A swap is two bank writes, so a step needs two write ports.** §5.2's "one
     bank write" per step hides this; with one port the fill is about `2 N`, not the
     draw count. §5.5.
+24. **The first pass boundary was consumed without switching banks.** A `started_q`
+    flag made the *first* boundary initialise the playing bank instead of handing
+    the other one in. Because the engine drives `ts_t = 0` in IDLE, the *start* of
+    a pass is not a 0-transition — the only boundary is the wrap at a pass's end —
+    so the flag's first use was that wrap, and the second pass repeated bank 0
+    while every later handoff ran one pass late. The flag is gone: `ready` (LEAD
+    banks built) already guarantees both banks are complete before the first pass
+    is admitted, so the first boundary is an ordinary switch.
+25. **`underrun` is a level for the boundary, not a latch.** A sticky flag cannot
+    answer which pass was starved, and one starvation would make every later pass
+    report one. §7.3 now states the level, and the wrapper owns the sticky
+    software view by latching it into its own RW1C bit.
 
 ### Remaining, and who decides
 
