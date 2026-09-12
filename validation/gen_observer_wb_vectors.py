@@ -146,7 +146,15 @@ def walk(name, N, C, W, O, ops):
             outs2 = observable(p, p.N, W, O, C)
             emit(1, 1, 1, adr, sel, dat, (int(acked), int(not acked), 0), outs2)
             p.tick()
-            response_cycle(0, 0)
+            # A third, IDLE cycle: the master has withdrawn the request
+            # (cyc & stb low), so the slave answers neither the held request nor
+            # anything else. ack and err are BOTH low. Do not use
+            # response_cycle() here: its err is !acked, so passing acked = 0
+            # would record an error response, which is itself a second answer
+            # -- contradicting the point of the cycle, and violating the
+            # contract, which answers only qualified requests.
+            emit(0, 0, 0, 0, 0xF, 0, (0, 0, 0), observable(p, p.N, W, O, C))
+            p.tick()
             txns += 1
         else:
             raise ValueError(f"unknown op {op!r}")
