@@ -256,6 +256,44 @@ verilate(bcmc_wb_test
                  -GIDX_W=${BCMC_WB_IDX_W} -GMAX_C=${BCMC_WB_MAX_C})
 
 #---------------------------------------------------------------------------
+# bcmc_obs_wb: the observer's register window, on real wires
+#
+# The whole observer chain under one top: bcmc_obs_wb -> bcmc_observer ->
+# bcmc_column -> bcmc_cell. It is a SEPARATE bus slave from bcmc_wb, sitting in
+# its own address region, so it gets its own geometry -- the geometry is what
+# OBS_CAPS reports, and a corpus recorded for one geometry is not valid for
+# another.
+#
+# These three must match validation/observer_periph.py's REF_MAX_C, REF_VAL_W
+# and REF_IDX_W, which the generator and the replayer both take as defaults.
+# Nothing enforces that at build time and nothing needs to: the corpus's first
+# recording reads OBS_CAPS, which encodes all three, so a mismatch fails on the
+# third op of the file.
+#---------------------------------------------------------------------------
+
+set(BCMC_OBSWB_MAX_C 64)
+set(BCMC_OBSWB_VAL_W 16)
+set(BCMC_OBSWB_IDX_W 16)
+
+add_executable(bcmc_obs_wb_test bcmc_obs_wb_test.cpp)
+target_link_libraries(bcmc_obs_wb_test PRIVATE bcmc_sim_common)
+target_compile_definitions(bcmc_obs_wb_test PRIVATE
+  BCMC_OBSWB_MAX_C=${BCMC_OBSWB_MAX_C}
+  BCMC_OBSWB_VAL_W=${BCMC_OBSWB_VAL_W}
+  BCMC_OBSWB_IDX_W=${BCMC_OBSWB_IDX_W})
+
+verilate(bcmc_obs_wb_test
+  SOURCES ${BCMC_RTL}/bcmc_obs_wb.v
+          ${BCMC_RTL}/bcmc_observer.v
+          ${BCMC_RTL}/bcmc_column.v
+          ${BCMC_RTL}/bcmc_cell.v
+  TOP_MODULE bcmc_obs_wb
+  PREFIX Vbcmc_obs_wb
+  TRACE
+  VERILATOR_ARGS -Wall -GVAL_W=${BCMC_OBSWB_VAL_W}
+                 -GIDX_W=${BCMC_OBSWB_IDX_W} -GMAX_C=${BCMC_OBSWB_MAX_C})
+
+#---------------------------------------------------------------------------
 # sw/bcmc.c: the driver, against the peripheral
 #
 # The only target here that compiles software rather than hardware, and the
@@ -566,6 +604,20 @@ add_test(NAME observer_hw_trace
          COMMAND bcmc_observer_hw_test --limit 6
                  --vcd ${BCMC_WAVES}/bcmc_observer_hw.vcd
                  ${BCMC_VECTORS}/obshw_edge.txt)
+
+# The observer's register window, replayed against the model's corpus. One test
+# rather than several: ack timing, the four refusals and their total absence of
+# effect, the deferred write landing on the commanded edge, RESET against a
+# running pass, the completion boundary and the projection are all carried by
+# the same ordered conversation, and splitting it would mean replaying it
+# several times to check it once.
+add_test(NAME observer_wb_corpus
+         COMMAND bcmc_obs_wb_test ${BCMC_VECTORS}/obswb_edge.txt)
+
+add_test(NAME observer_wb_trace
+         COMMAND bcmc_obs_wb_test --limit 4
+                 --vcd ${BCMC_WAVES}/bcmc_obs_wb.vcd
+                 ${BCMC_VECTORS}/obswb_edge.txt)
 
 add_test(NAME context_trace
          COMMAND bcmc_context_test --limit 4
