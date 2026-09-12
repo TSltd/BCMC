@@ -165,6 +165,12 @@ step "6/12  the hardware observer engine satisfies its specification"
 ( cd validation && python3 traversal_sources.py ) || die "validation/traversal_sources.py"
 ( cd validation && python3 test_traversal_sources.py ) || die "test_traversal_sources.py"
 
+# The affine source's stimulus corpus, which is a *script* rather than a table
+# because section 4.4 promises no cycle count for the derivation. The generator
+# refuses to emit a corpus that cannot tell a free-running accumulator, a derived
+# step 0, or a VAL_W-bit sum apart from the real thing.
+( cd validation && python3 gen_src_affine_vectors.py ) || die "gen_src_affine_vectors.py"
+
 # The cycle model is the golden engine for rtl/bcmc_observer.v, exactly as
 # observers.py is the golden traversal for sw/bcmc_observer.c. It is a Python
 # model, not a second implementation of anything: it is written from
