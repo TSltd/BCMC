@@ -1106,7 +1106,9 @@ The two-port engine change of §8.2 — the strictest obligation in the phase �
 computing the traversal, the identity is instantiated as the *real* module in the
 window and in the Icarus bench, and **every v2.0a suite passes unchanged, 50/50**,
 with no corpus file touched by the commit. That is the claim §1.1 was written to
-make checkable, and it held.
+make checkable, and it held. **Both simulators confirm it**: 50/50 under Verilator,
+and `ICARUS: PASS` — the path where the identity is a real instantiated module
+rather than a C++ assignment, and therefore the stronger of the two.
 
 The one qualification is the assertion correction §8.2 now records: `col_q == ts_pi`
 is *not* an invariant — the ask is latched an edge before the visit it produces —
