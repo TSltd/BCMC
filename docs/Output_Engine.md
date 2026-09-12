@@ -131,10 +131,11 @@ inputs (§3.2) and why no traversal-source selector appears anywhere in §3.
    column_bits   [MAX_C-1:0] ───────────────────────>  column_bits_i
    visit_valid   [1]         ───────────────────────>  visit_valid_i
    valid         [1]         ───────────────────────>  valid_i
-   done          [1]         ───────────────────────>  done_i
    C             [IDX_W-1:0] ───────────────────────>  C_i
    clk, rst      [1]         ───────────────────────>  clk, rst
                                                        pins_o [MAX_C-1:0] ──> GPIO
+
+   done          [1]  ──── NOT a port of this block; see 2.2
 ```
 
 | Input | Source | Used for |
@@ -142,13 +143,16 @@ inputs (§3.2) and why no traversal-source selector appears anywhere in §3.
 | `column_bits_i` | the observer's own `bcmc_column` instance | the pattern |
 | `visit_valid_i` | §3.7, the registered visit gated on `VALID` | the latch enable, and the application event (§4.1) |
 | `valid_i` | the wrapper's `VALID`, the same wire the observer consumes | the **presentation gate** (§4.2, §6) |
-| `done_i` | §3.8, coincident with the last visit of a pass | pass-boundary policy the application may apply (§5) |
 | `C_i` | the wrapper's `C` | **not** the datapath — it checks that no masking is needed (§2.3) |
 
-`valid_i` is the one addition to the boundary §8.1 drew, which listed four
-wires. The reason is §6: the staleness rule cannot be stated without knowing
-whether the matrix still exists, and §2.2 records why the abort *event* cannot
-substitute for it.
+`valid_i` is the one addition to the boundary §8.1 drew, which listed four wires.
+The reason is §6: the staleness rule cannot be stated without knowing whether the
+matrix still exists, and §2.2 records why the abort *event* cannot substitute for
+it. `done` is the one **removal** from that boundary, and §2.2 records why: it is
+a signal the block has no use for, and a port nothing reads is an invitation.
+
+This is the frozen interface. The RTL's port list is exactly these six plus
+`pins_o`, and §10.2 item 11 obliges a structural check that nothing else appears.
 
 ### 2.2 What is not among them, and why
 
@@ -174,6 +178,31 @@ nothing to evaluate. The pattern arrives already evaluated.
 an input that nothing needs is an invitation for a later revision to give it a
 meaning. The one question it might answer — "has a pass ever run?" — is answered
 by the pattern register itself.
+
+**Not `done`.** This one is a decision rather than an oversight, and it is the
+sharpest of the absences. `done` is coincident with the last visit of a pass
+(§3.8), and §5 says an application may want to blank its outputs at that point —
+which makes `done` *look* like an input this block should have. It is not, for
+three reasons:
+
+1. **The datapath does not use it.** §6.5's five lines have no term in `done`. A
+   port that nothing reads is an unused input, and §10.2 item 11 would have to be
+   weakened to tolerate it — a structural check relaxed to admit a signal nothing
+   needs.
+2. **It would make §10.2 item 3 violable.** Item 3 requires the last visit of a
+   pass to be treated like any other. With no `done` input the block *cannot*
+   treat it specially, so the property is structural rather than tested. Handing
+   it the signal converts a property that cannot fail into one that must be
+   checked, which is strictly worse.
+3. **An application can already see it.** `done` is on the observation sideband
+   (§3.8), available to whatever application wrapper sits above this block. §5's
+   "policy belongs above the block" is satisfied at the system level without this
+   block relaying a signal it does not consume.
+
+So the boundary is: **this block presents patterns; an application reads `done`
+from the engine and decides what to do about it elsewhere.** That is the boundary
+§8 meant. Its diagram drew `done` along the arrow, and this document deliberately
+does not — recording the difference rather than quietly inheriting it.
 
 **Not `aborted`.** Considered and rejected, and this one is worth recording
 carefully, because it is the obvious first choice. An abort *event* looks like
@@ -255,9 +284,17 @@ The output stage is in exactly one of two states at any time.
 | **idle** | the configured idle level, on every pin | on reset, and whenever `valid_i` is low |
 
 "Idle" is not a third behaviour bolted on; it is the *absence* of a pattern whose
-matrix exists, which is §6's whole subject. With the default polarity (§9) the
-idle level is deasserted, so the idle state is legible on the pins themselves and
-needs no status wire to observe it.
+matrix exists, which is §6's whole subject.
+
+**The reference build has no polarity inversion and no configurable idle level,
+and that is settled here rather than left open.** `pins_o` is the pattern gated by
+`valid_i`, so the idle level is zero on every pin, and the idle state is legible
+on the pins themselves with no status wire. Per-pin polarity remains a §9.2
+extension, and when it exists it applies *after* the gate — an active-low pin
+idles high — in a different build of a different block. Making polarity a
+parameter of this one now would put a configuration input in the datapath for a
+feature nothing in v2.0b uses, and §10.2 item 11 would have to admit it. §11
+records this as decided.
 
 There is no intermediate state, no queue, and no partially-driven pattern, so
 there is **nothing that can be partially consumed** — a question §6 would
@@ -359,9 +396,9 @@ things, and a consumer is entitled to see the difference.
 
 `done` is coincident with the last visit of a pass (§3.8), not one cycle after
 it. So the last visit of a pass is an ordinary visit in every respect: it latches
-a pattern, changes the pins, and `done_i` is high in the same cycle. Nothing in
-the output engine treats it specially, and §5 says where a policy that wants to
-would live.
+a pattern, presents it, and `done` — the engine's, not this block's, which has no
+such port (§2.2) — is high in the same cycle. Nothing in the output engine treats
+it specially, and §5 says where a policy that wants to would live.
 
 After `done`, with a valid context, the last pattern stays latched and stays
 presented until the next visit — which is `pi(0)` of the next pass, or the next
@@ -390,9 +427,11 @@ What an application *may* do with `done` is apply **policy**: an application tha
 wants its outputs blank at the end of a one-shot pass deasserts them itself, on
 `done`. That is application semantics (`docs/Observers.md`: what an observer does
 with a visit, and whether it runs once or forever, is outside the observer
-specification), and it belongs in the application rather than in this block. This
-block's contribution is to make it *possible*: `done` is presented, and the
-pattern is held rather than auto-cleared, so an application can choose either.
+specification), and it belongs in a layer above this block rather than in it —
+reading `done` from the sideband, since this block has no such port (§2.2). What
+this block contributes is to make the choice *possible*: the pattern is held
+rather than auto-cleared, so an application can blank, hold, or do something else
+entirely, and none of those decisions changes the datapath.
 
 The default — no policy applied — is: the last pattern stays presented. That is
 §3.3 and §4.3, and it needs no configuration to be the behaviour.
@@ -524,7 +563,7 @@ list of §2.1. That is what §10's model has to falsify.
 
 The output engine never stalls the observer. It cannot: **there is no wire with
 which to do it.** The seam is one-directional — `column_bits`, `visit_valid`,
-`valid`, `done` and `C` inward, `pins_o` outward — so the absence is structural in
+`valid` and `C` inward, `pins_o` outward — so the absence is structural in
 the same way §2.2's absences are, not a promise about conduct.
 
 §8.3 of the architecture document gives the reason, and it is worth restating
@@ -715,7 +754,12 @@ were claims that *sounded* like the same statement made twice and were not.
 2. **Hold.** With no visit and a valid context, the pins are unchanged, however
    many cycles pass.
 3. **`done` is not special.** The last visit of a pass latches and presents like
-   any other, and the pattern survives the pass boundary.
+   any other, and the pattern survives the pass boundary. This one is
+   **structural rather than observable**: the block has no `done` input (§2.2), so
+   it cannot special-case the last visit, and what the suite must check is the
+   negative — that no such port appears (item 11). That `done` is coincident with
+   the last visit is the engine's property, checked by the engine's own harness,
+   and it is the reason the absence here is safe.
 4. **The gate is combinational.** In the cycle `valid` falls, the pins are already
    idle — no edge, no lag.
 5. **The destroy.** Invalidate, revalidate *without a visit*, and the pins must be
@@ -772,18 +816,22 @@ Small enough to exhaust, as elsewhere in this project:
 ### 10.4 The corpus, and the two simulators
 
 `gen_out_engine_vectors.py` records inputs beside the model's declared outputs —
-`valid`, `rst`, `column_bits`, `visit_valid`, `done`, `C` in; `pattern` and `pins`
+`valid`, `rst`, `column_bits`, `visit_valid` and `C` in; `pattern` and `pins`
 out — one run per header, in the shape `gen_observer_wb_vectors.py` established.
+`done` is not among the inputs, because it is not a port (§2.2).
 
 It carries the **structural coverage guard** that generator introduced, because
 that guard has already earned its keep: the corpus is *built from* a table of
 mandatory cases, and the generator reads the case names back out of the file it
 just wrote and refuses to emit a corpus that is missing any of them. For this
-layer the mandatory set is: a visit latched; hold across several idle cycles;
-`done` coincident with a final visit; a mid-pass reset; **invalidate → revalidate
-with no visit** (§10.2 item 5); invalidation at the first and last step; `N = 1`;
-a multi-row pattern with a nonzero `column_bits`; and `C < MAX_C` so the §2.3
-assertion has something to be true about.
+layer the mandatory set is: a visit latched; **hold across several idle cycles
+with a non-zero pattern latched** (the model's own mutation battery found that a
+stimulus which never holds, or which invalidates while the pins are already idle,
+cannot test the hold or the destroy); a final visit of a pass; a mid-pass reset;
+**invalidate → revalidate with no visit** (§10.2 item 5), with a non-zero pattern
+being driven at the moment the context goes away; invalidation at the first and
+last step; `N = 1`; a multi-row pattern with a nonzero `column_bits`; and
+`C < MAX_C` so the §2.3 assertion has something to be true about.
 
 Then two independent paths over that one file:
 
@@ -896,20 +944,28 @@ failure mode is invisible without a control.
 11. **Output order is observation order** — no buffer, no reordering, no priority
     (§3.5).
 12. **One-shot versus continuous is not decided here**; both modes present the same
-    thing, and `done` is offered so that an application can apply policy (§5).
+    thing, and `done` — which this block does not take — remains available on the
+    sideband for an application to apply policy with (§5).
 13. **The extensions are admitted only under three rules** — §6.2's clear must
     reach them, they must not add back-pressure, and they must not encode
     traversal (§9.2).
 14. **v2.0c's fill bound is not an assumption of this layer**: no rate, no source
     selection, no bank handshake (§9.1).
+15. **`done` is not a port of this block.** Decided here, before the RTL, for the
+    three reasons §2.2 gives: the datapath does not use it, its absence makes
+    §10.2 item 3 unfalsifiable rather than merely checked, and an application can
+    read it from the sideband. §8.1's diagram drew it along the arrow; this
+    document deliberately does not.
+16. **No polarity inversion and no configurable idle level** in the reference
+    build. Idle is zero on every pin, because `pins_o` is the pattern gated by
+    `valid_i`; per-pin polarity stays a §9.2 extension applied *after* the gate,
+    in a different build rather than a parameter of this one (§3.2).
 
 ### Remaining, and who decides
 
 | Open question | Decided by | When |
 | --- | --- | --- |
 | The name and location of the model (`validation/output_engine.py` assumed) | this document | now, cheaply reversible |
-| The reference instance's default polarity and idle level | this document, with the model | before RTL |
-| Whether `done` is consumed here or passed on to applications | the v2.0d specification | with the applications |
 | Whether a pin-change strobe is wanted | the v2.0d specification | with the applications |
 | Whether the reference output stage is one instance or a bank (§9.2) | the v2.0d specification | with the applications |
 | Whether Fisher–Yates must be index-for-index with `sw/bcmc_observer.c` | the v2.0c specification | with §9.3 |
