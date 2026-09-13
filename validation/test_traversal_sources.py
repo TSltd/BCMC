@@ -263,8 +263,9 @@ def test_underrun_repeats_a_complete_bank():
     passes = 0
     underruns = 0
     for _ in range(40):
-        s.underrun_flag = False
-        s.start_pass()
+        s.underrun_next = False            # the schedule, not the presented level
+        s.start_pass()                     # this boundary's decision...
+        s.tick()                           # ...is presented from here
         passes += 1
         if s.underrun_flag:
             underruns += 1

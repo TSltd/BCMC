@@ -326,7 +326,8 @@ class Source:
         self.N = N
         self.seed = seed & 0xFFFFFFFF
         self.loads = 0
-        self.underrun_flag = False
+        self.underrun_flag = False     # the PRESENTED level
+        self.underrun_next = False     # the boundary decision, scheduled
         self._on_load()
 
     def load(self, seed):
@@ -334,6 +335,7 @@ class Source:
         self.seed = seed & 0xFFFFFFFF
         self.loads += 1
         self.underrun_flag = False
+        self.underrun_next = False
         self._on_load()
 
     def _on_load(self):
@@ -553,6 +555,14 @@ class ShuffledSource(Source):
     def tick(self, ts_t=0):
         if self.unservable:
             return
+        # The level is REGISTERED -- section 7.3: "a level describing the boundary,
+        # set when a boundary had to repeat" -- so the decision this edge makes is
+        # presented from the NEXT edge, exactly as rtl/bcmc_src_shuffled.v's
+        # `underrun_q` register behaves. (That module's port comment said "sticky
+        # until load", which finding 25 corrected into this per-boundary level.)
+        # The transfer therefore happens BEFORE this edge's boundary can change it.
+        self.underrun_flag = self.underrun_next
+
         # The pass boundary, derived from the shared seam exactly as
         # rtl/bcmc_src_shuffled.v derives it: a TRANSITION into `ts_t == 0`. The
         # first ask of a pass is `ts_t == 0` with `ts_t_q` already 0, so it is not a
@@ -663,14 +673,17 @@ class ShuffledSource(Source):
         >>> while not s.ready():
         ...     s.tick()
         >>> _ = s.start_pass()          # boundary 1: bank 1 is COMPLETE, so it switches
+        >>> s.tick()                    # the level is REGISTERED: presented from here
         >>> s.underrun_flag
         False
         >>> for _ in range(64):
         ...     s.tick()                # serial refill of the freed slot: setup + c_fill
         >>> _ = s.start_pass()          # boundary 2: finds its bank
+        >>> s.tick()
         >>> s.underrun_flag
         False
         >>> _ = s.start_pass()          # boundary 3: no clocks since, so it repeats
+        >>> s.tick()
         >>> s.underrun_flag
         True
         >>> sorted(s.walk_bank()) == list(range(4))
@@ -687,7 +700,7 @@ class ShuffledSource(Source):
             # playing so it can be refilled.
             self.bank[self.playing] = None
             self.playing = other
-            self.underrun_flag = False     # this boundary found its bank
+            self.underrun_next = False     # this boundary found its bank
             if self.filling is None:
                 self.filling = self._free_slot()
                 if self.filling is not None:
@@ -697,7 +710,7 @@ class ShuffledSource(Source):
             # bank is COMPLETE and becomes PLAYING, or the current bank remains
             # PLAYING and `underrun_flag` asserts. Never a third bank, and never a
             # stall.
-            self.underrun_flag = True      # repeat the bank already playing
+            self.underrun_next = True      # repeat the bank already playing
         return self.bank[self.playing]
 
 

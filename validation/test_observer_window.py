@@ -194,7 +194,8 @@ def test_underrun_latches_and_reasserts_while_high():
     check(drive_until_ready(w), "the shuffled source fills")
     sh = w.sources[SEL_SHUFFLED]
     for _ in range(64):                    # outrun the fill: a boundary repeats
-        sh.start_pass()
+        sh.start_pass()                    # schedules this boundary's decision...
+        sh.tick(0)                         # ...which is PRESENTED from this edge
         if sh.underrun_flag:
             break
     check(sh.underrun_flag, "the source reports a missed bank")

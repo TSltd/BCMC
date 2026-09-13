@@ -206,16 +206,25 @@ class Window:
         >>> w.tick(0)
         >>> bool(w.status() >> BIT_READY & 1)   # identity: ready after a cycle
         True
+
+        The latch samples the sources' underrun LEVELS **before** this edge advances
+        them, which is a register reading registered source outputs -- what section
+        8.4 item 5's "latches the level into its own bit" means, and why a clear while
+        the level is high re-asserts "on the next cycle". Sampling after the sources
+        tick would make an assertion visible on the very edge it is made: one cycle
+        earlier than the RTL, which the differential caught at three runs' first
+        STATUS reads. (Finding 35, Stage 1 -- Stage 2, `under_lat` to `wb_dat_o`, is
+        already contractual and already matched.)
         """
         self.ts_t = ts_t
+        if any(s.underrun_flag for s in self.sources):
+            self.underrun_seen = True
+            self.under_lat = True
         for s in self.sources:
             s.tick(ts_t)
         self.recovery_q = False             # the recovery is one cycle long
         if not self.ready():
             self.unready_lat = True         # the sticky view, recovery included
-        if any(s.underrun_flag for s in self.sources):
-            self.underrun_seen = True
-            self.under_lat = True
 
     def pi(self):
         """The mux: the selected source's answer, combinationally. No cycle."""
