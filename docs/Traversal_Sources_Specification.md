@@ -1115,6 +1115,38 @@ The frozen stimulus that exposed this is not changed. `n_zero_refuses_start` sta
 exactly as it is, and becomes the falsifier again once the contract and the RTL
 agree.
 
+**14. Finding 35: source-underrun visibility ordering.** `SEED_UNDERRUN` reaches
+software through a two-stage registered chain, and the stages have different
+correctness:
+
+    source underrun_q  ->  registered wrapper latch under_lat  ->  wb_dat_o
+
+**Stage 2 (`under_lat` -> `wb_dat_o`) is contractual and already validated.** The
+bus section of `docs/Observer_Register_Map.md` fixes a Classic Wishbone B4 slave with
+"registered feedback not used", a single-cycle response "in the cycle after" the
+request, and a value computed *during* the request cycle -- so a read cannot expose a
+level that first asserts on the edge into its own response cycle. That convention is
+not merely written down: the frozen v2.0a corpus validates it, because the RTL
+reproduces those recorded responses exactly.
+
+**Stage 1 (`underrun_q` -> `under_lat`) is missing from the model.** Item 5 above says
+the wrapper *latches* the level into its own bit and that clearing while the level is
+high *re-asserts on the next cycle*; the level it samples is itself a registered
+source output. So for an assertion at edge E, `under_lat` acquires it at E+1, and a
+request at E or earlier cannot see it. The model instead sets `under_lat` in the same
+`tick` that the source's boundary sets the flag -- zero lag where the contract
+specifies one register. That is the whole of the remaining differential: three runs,
+all at their FIRST `STATUS` read, where the model asserts `SEED_UNDERRUN` one cycle
+before the RTL does. Later reads have had the missing edge and both sides agree,
+which is why only first reads are affected.
+
+**Proposed model-only correction, NOT applied: sample the source underrun levels
+before source advancement in `Window.tick`, so `under_lat` represents the previous
+cycle's level.** This is the state transition the register stage already implies, not
+a test-directed delay: `setup = 1` and the serial fill are untouched, no RTL change is
+indicated, and the corpus is NOT regenerated -- its current expectations faithfully
+represent the model as it stands, including the missing stage.
+
 ---
 
 ## 9. What v2.0c does not solve
