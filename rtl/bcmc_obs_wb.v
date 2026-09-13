@@ -158,6 +158,9 @@ module bcmc_obs_wb #(
     reg  [1:0]       sel_q;
     reg  [31:0]      seed_q;
     reg  [VAL_W-1:0] n_q;
+    // 1 from the second cycle onward. It is what separates the FIRST observation
+    // of N -- the reset condition -- from a change during life.
+    reg              n_seen_q;
     // The underrun level, latched. The level belongs to the source and the
     // stickiness lives here, which is what makes clearing it re-assert while the
     // level is still high (section 8.4 item 5).
@@ -190,6 +193,12 @@ module bcmc_obs_wb #(
     // is the same wire the sources see.
     wire sel_changed = wr_ctrl_req & (wb_dat_i[CTRL_SEL_HI:CTRL_SEL_LO] != sel_q);
     wire n_changed   = (obs_n_i != n_q);
+    // A change DURING life, which is what voids readiness -- as opposed to the
+    // FIRST observation of N, which is the reset condition and voids nothing. This
+    // is finding 28's lesson arriving in the RTL: the model had the identical
+    // defect, treating construction as a load, and it showed up here as a refused
+    // cycle-0 START. Eight of the frozen corpus's START writes are in cycle 0.
+    wire n_changed_q = n_changed & n_seen_q;
 
     // `N < 1` is outside every source's domain (section 3.4), and the model's
     // answer -- which this mirrors -- is that no source exists at all. In
@@ -221,7 +230,7 @@ module bcmc_obs_wb #(
     // selector change, so such a write is judged on its pre-change readiness and,
     // if accepted, both the start and the load happen. `recovery_start` is that
     // reading, expressed in hardware.
-    wire recovery_start = load_seed | n_changed;
+    wire recovery_start = load_seed | n_changed_q;
 
     // All three sources are instantiated and clocked whether selected or not, so
     // an unselected source keeps its own state -- which is why a pass on one does
@@ -288,7 +297,8 @@ module bcmc_obs_wb #(
     // identity's legal-domain constant 1 is not allowed to leak into a context
     // that has no source at all. The identity's contract is unchanged; what is
     // added is the window's own answer for an unusable context (finding 29).
-    assign seam_ready = ~no_source & selected_ready & ~load_all;
+    assign seam_ready = ~no_source & selected_ready
+                      & ~(load_seed | load_sel | n_changed_q);
     // What START is admitted against. See `recovery_start` above for why this is
     // not simply seam_ready. `START` is refused at `N < 1` by this term and by
     // section 3.4's own `N >= 1`, which is belt and braces on purpose.
@@ -427,6 +437,7 @@ module bcmc_obs_wb #(
             sel_q         <= SEL_IDENTITY;
             seed_q        <= 32'd0;
             n_q           <= {VAL_W{1'b0}};
+            n_seen_q      <= 1'b0;
             under_lat     <= 1'b0;
         end else begin
             wb_ack_o <= 1'b0;
@@ -481,6 +492,7 @@ module bcmc_obs_wb #(
             // only place a change in it can be seen -- and `n_changed`, which
             // pulses `load` above, is asked of it.
             n_q <= obs_n_i;
+            n_seen_q <= 1'b1;   // from here on, a change in N is a real change
 
             // SEED_UNDERRUN, set from the sources' level and cleared by writing 1.
             // The clear is asked second, so a clear and a level in the same cycle
