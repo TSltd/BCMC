@@ -223,7 +223,11 @@ module tb_observer_wb_smoke;
         @(negedge wb_clk_i);
         expect(!running_o, "a one-shot pass is still running");
         wb_read(OBS_STATUS);
-        expect(rd_val == 32'h2, "STATUS is not DONE-only after the pass");
+        // v2.0c: DONE | SEED_READY. Bit 3 is specified (section 8.4 item 5) and the
+        // source is ready, so the COMPLETE v2.0c value is asserted here rather than
+        // masking the new bits out -- the fixture stays sensitive to the specified
+        // STATUS semantics instead of being weakened to "the old bits still work".
+        expect(rd_val == 32'hA, "STATUS is not DONE | SEED_READY after the pass");
         wb_read(OBS_PASS);
         expect(rd_val == 32'd1, "PASS did not count the completed pass");
 
@@ -234,7 +238,11 @@ module tb_observer_wb_smoke;
         expect(!running_o, "RESET: still running in the ack cycle");
         wb_release();
         wb_read(OBS_STATUS);
-        expect(rd_val == 32'd0, "RESET left STATUS dirty");
+        // v2.0c: SEED_READY is a LEVEL, not a latch. RESET clears DONE and ABORTED and
+        // leaves bit 3 high once the source is ready -- reset does not make a source
+        // permanently unready -- and bit 4 stays clear because no boundary has been
+        // missed. 0x8 is the correct post-RESET STATUS, asserted whole.
+        expect(rd_val == 32'h8, "RESET left STATUS other than SEED_READY");
         wb_read(OBS_PASS);
         expect(rd_val == 32'd0, "RESET left the pass counter");
         expect(obs_valid_i, "RESET disturbed the sideband; it is not its to touch");
