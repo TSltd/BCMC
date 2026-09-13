@@ -318,7 +318,7 @@ def _pass_without_n_observation(N_before, N_after, seed, bank_n_max=256):
         s.tick()
     s.start_pass()                     # START admitted, as the engine would
     s.N = N_after                      # the core wrote N; no load followed
-    bank = s.active if s.active is not None else []
+    bank = s.bank[s.playing] if s.playing is not None else []
     seen = [bank[t] if t < len(bank) else None for t in range(N_after)]
     return s.ready(), seen, sorted(x for x in seen if x is not None) == \
         list(range(N_after))

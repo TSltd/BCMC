@@ -118,37 +118,31 @@ class ObserverPeriphV2C(ObserverPeriph):
         | refused START    | not called    | none          |
         | invalidation     | not called    | none          |
 
-        The boundary is signalled *here*, at the composition layer, because the
-        RTL derives it internally -- `rtl/bcmc_src_shuffled.v` has no
-        `start_pass` port -- while the Python source model exposes it as an
-        explicit method. That is a model-interface asymmetry and nothing more:
-        test-model plumbing, not a hardware input. It follows
-        `traversal_sources.bind_pass`'s idiom (ready first, then `start_pass()`
-        if the source has one) rather than inventing a second one, and the
-        precondition agrees with `start_acceptable` by construction, since only
-        an accepted START reaches the IDLE branch that asks `source(0)`.
+        The answer reads the window's `ts_t` **as established at the previous edge**
+        -- section 8.2's registered seam value -- so the engine's own cursor argument
+        is deliberately not used here. `tick` is where the seam advances.
         """
         if self.window is None:
             return t                  # unreachable: START is refused at N < 1
-        if t == 0:
-            src = self.window.selected()
-            if hasattr(src, "start_pass"):
-                src.start_pass()
-        self.window.ts_t = t
         return self.window.pi()
 
     def tick(self):
         """
-        One clock: the engine's edge, then the window's -- in that order.
+        One clock: the engine's edge, then the seam's.
 
-        The ask happens *inside* `super().tick()` (the engine's edge calls the
-        source), so the cursor must move *after* it, with the step the engine
-        just advanced to. Reversing the two would answer every visit with the
-        next one's column.
+        Section 8.2 defines the ask as `ts_t = (IDLE ? 0 : t_next)`, where `t_next`
+        is the step about to be presented -- one *ahead* of the engine's cursor.
+        The engine latches the source's answer on the edge before it presents that
+        visit, so `ts_t` must be computed from the state AFTER this edge and clocked
+        into the sources on the same edge, which is what `Window.tick` does. Asking
+        with `tq` instead put the seam one step behind the RTL and left the sources
+        blind to the pass's closing boundary. (Finding 33.)
         """
         out = super().tick()
-        if self.window is not None:
-            self.window.tick(self.eng.tq)
+        if self.window is None:
+            return out
+        ts = (self.eng.tq + 1) % self.window.N if self.running else 0
+        self.window.tick(ts)
         return out
 
     # -- the registers v2.0c adds -------------------------------------------

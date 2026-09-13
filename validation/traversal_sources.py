@@ -495,29 +495,100 @@ class ShuffledSource(Source):
 
     def _on_load(self):
         self.rng = SplitMix32(self.seed)
-        self.banks = []
-        self.active = None
+        # Section 5.5's TWO banks, and nothing that could grow into a queue: a slot
+        # holds a completed bank or None (EMPTY / being filled), `playing` names the
+        # PLAYING slot, and `filling` is the slot the current fill is going into.
+        # `filling` can only ever be a FREE slot, which is what bounds the buffer at
+        # two -- "it funds the buffer, it does not create a queue". (Finding 31.)
+        self.bank = [None, None]
+        # Bank 0 is the presented bank from reset -- `playing_q`'s reset value in
+        # the RTL, where "The first pass plays bank 0" follows from nothing having
+        # switched it, NOT from a first-pass event. There is no None state.
+        # (Finding 32.)
+        self.playing = 0
+        self.filling = None
         self.built = 0                 # banks completed since the load
         self.startup_done = False
+        self.ts_t_q = 0                # finding 30's boundary memory
         self.unservable = self.N > self.bank_n_max
         if not self.unservable:
+            self.filling = self._free_slot()
             self._start_fill()
 
+    def _free_slot(self):
+        """
+        A slot the fill may write into: one that holds **no bank**.
+
+        Not "one that is not playing": `playing` is only a *pointer*, and at reset
+        it is 0 while bank 0's state is EMPTY -- so excluding it deadlocks the fill
+        and `ready()` can never be satisfied. The RTL fills any EMPTY bank, and the
+        read side is safe for the same reason it is there: during a pass the read
+        slot always holds a bank (COMPLETE or PLAYING), never EMPTY. §5.5's "the
+        fill can never write the bank being read" therefore holds without this
+        exclusion, and the two-bank bound still holds because at most one slot can
+        be empty at a time once a pass is playing.
+        """
+        for i in (0, 1):
+            if self.bank[i] is None:
+                return i
+        return None
+
     def _start_fill(self):
-        self.fill, self.fill_remaining = bank_and_cost(self.rng, self.N)
+        """
+        Begin one bank's serial fill: **one setup cycle** (the per-bank mask clear --
+        section 5.5: "cleared at each fill start", "a single assignment") followed by
+        `c_fill(N)` shuffle-step cycles (section 5.2). Section 5.4's arithmetic is
+        therefore `1 + c_fill(N)` per bank, for EVERY bank including the first, and the
+        schedule is serial: `tick` only calls here from a free slot, so the next bank's
+        setup cannot begin until the preceding bank has completed.
+
+        The cost change is timing only -- the bank and the generator draws are exactly
+        what `bank_and_cost` produced before, so the permutation, the draw stream and
+        `bank_fill_cycles`' meaning are all untouched. (Finding 34, adjudicated: the
+        specification's `LEAD * c_fill(N)` had silently assumed a zero-cost setup.)
+        """
+        self.fill, cost = bank_and_cost(self.rng, self.N)
+        self.fill_remaining = 1 + cost          # 1 setup cycle + c_fill(N) steps
 
     def tick(self, ts_t=0):
         if self.unservable:
             return
+        # The pass boundary, derived from the shared seam exactly as
+        # rtl/bcmc_src_shuffled.v derives it: a TRANSITION into `ts_t == 0`. The
+        # first ask of a pass is `ts_t == 0` with `ts_t_q` already 0, so it is not a
+        # transition -- which is why the first pass plays the first bank with no
+        # special case, and why `bind_pass`'s explicit `start_pass()` cannot
+        # double-consume a boundary for a bound pass (which never wraps).
+        #
+        # Read BEFORE the fill advance below, so a bank completing on this same
+        # edge is not seen by this boundary -- matching the RTL, where the boundary's
+        # `do_switch` and the fill's completion both register from the pre-edge
+        # state.
+        #
+        # Deriving it HERE rather than from a composition callback is what gives an
+        # UNSELECTED source the same boundary observations as a selected one: the
+        # window already ticks every source with the same `ts_t`. (Finding 30.)
+        if (ts_t == 0) and (ts_t != self.ts_t_q):
+            self.start_pass()
+        self.ts_t_q = ts_t
+
+        if self.filling is None:
+            return                     # both slots account for themselves
+
         self.fill_remaining -= 1
         if self.fill_remaining <= 0:
-            self.banks.append(self.fill)
+            self.bank[self.filling] = self.fill
             self.built += 1
             if self.built >= self.lead:
                 # Latched, and never cleared by an underrun: this is the
                 # start-up condition of section 5.4, not a queue-depth test.
                 self.startup_done = True
-            self._start_fill()
+            # The next fill starts only if a slot is free. Once a pass is playing,
+            # the other slot is either COMPLETE (waiting to hand over) or the one a
+            # switch just freed -- never a third queued bank.
+            self.filling = self._free_slot()
+            if self.filling is not None:
+                self._start_fill()
 
     def ready(self):
         """
@@ -549,9 +620,9 @@ class ShuffledSource(Source):
         ...     s.tick()
         >>> s.ready()
         True
-        >>> _ = s.start_pass()          # the first pass; the queue is now short
-        >>> len(s.banks) < s.lead
-        True
+        >>> _ = s.start_pass()          # a boundary: it SWITCHES, freeing the other slot
+        >>> sum(1 for i in (0, 1) if i != s.playing and s.bank[i] is not None)
+        0
         >>> s.ready()                   # ... and still ready, because it latched
         True
 
@@ -564,12 +635,13 @@ class ShuffledSource(Source):
 
     def walk_bank(self):
         """The pass the active bank defines. Combinational, and free."""
-        return [bank_read(self.active, t) for t in range(self.N)]
+        return [bank_read(self.bank[self.playing], t) for t in range(self.N)]
 
     def pi(self, ts_t):
-        if self.active is None:
+        b = self.bank[self.playing]
+        if b is None:
             return 0
-        return bank_read(self.active, ts_t)
+        return bank_read(b, ts_t)
 
     def start_pass(self):
         """
@@ -590,22 +662,43 @@ class ShuffledSource(Source):
         >>> s = ShuffledSource(4, 3)
         >>> while not s.ready():
         ...     s.tick()
-        >>> _ = s.start_pass()
-        >>> _ = s.start_pass()
+        >>> _ = s.start_pass()          # boundary 1: bank 1 is COMPLETE, so it switches
         >>> s.underrun_flag
         False
-        >>> _ = s.start_pass()
+        >>> for _ in range(64):
+        ...     s.tick()                # serial refill of the freed slot: setup + c_fill
+        >>> _ = s.start_pass()          # boundary 2: finds its bank
+        >>> s.underrun_flag
+        False
+        >>> _ = s.start_pass()          # boundary 3: no clocks since, so it repeats
         >>> s.underrun_flag
         True
         >>> sorted(s.walk_bank()) == list(range(4))
         True
         """
-        if self.active is None or len(self.banks) >= 1:
-            self.active = self.banks.pop(0)
+        # NO first-pass special case (finding 32): bank 0 is already playing from
+        # reset, so every boundary is an ordinary switch attempt. The RTL says the
+        # same thing -- "there is NO special case for the first pass here -- and
+        # there must not be: an earlier revision initialised `started_q` at the
+        # *first* boundary, which consumed the first wrap without switching".
+        other = 1 - self.playing
+        if self.bank[other] is not None:
+            # The alternate bank is COMPLETE: hand it in, and free the slot that was
+            # playing so it can be refilled.
+            self.bank[self.playing] = None
+            self.playing = other
             self.underrun_flag = False     # this boundary found its bank
+            if self.filling is None:
+                self.filling = self._free_slot()
+                if self.filling is not None:
+                    self._start_fill()
         else:
+            # The invariant, as a transition: at EVERY boundary either the alternate
+            # bank is COMPLETE and becomes PLAYING, or the current bank remains
+            # PLAYING and `underrun_flag` asserts. Never a third bank, and never a
+            # stall.
             self.underrun_flag = True      # repeat the bank already playing
-        return self.active
+        return self.bank[self.playing]
 
 
 # ---------------------------------------------------------------------------
@@ -639,8 +732,11 @@ def bind_pass(source):
     """
     if not source.ready():
         raise ValueError("source is not ready; no pass is admitted until it is")
-    if hasattr(source, "start_pass"):
-        source.start_pass()
+    # NO start_pass() here (finding 32). The RTL has no first-pass event: bank 0 is
+    # presented from reset, and `ready()` above is the whole precondition -- it is
+    # section 5.4's, and it is the same condition the window's E4 uses. Injecting a
+    # boundary here consumed the first wrap as a "selection" and made the first-pass
+    # underrun the RTL reports unrepresentable.
     return lambda t: source.pi(t)
 
 

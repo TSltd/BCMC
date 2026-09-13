@@ -226,9 +226,14 @@ def test_startup_readiness_is_latched():
         s.tick()
         ticks += 1
     check(s.ready(), "ready once LEAD banks have been built")
-    check(len(s.banks) == LEAD, "exactly LEAD banks are queued at that moment")
+    check(all(b is not None for b in s.bank),
+          "both bank slots hold a bank at that moment (section 5.5's two banks)")
     s.start_pass()
-    check(len(s.banks) == LEAD - 1, "starting a pass consumes a queued bank")
+    # A boundary SWITCHES: the alternate bank takes over and the slot that was
+    # playing is freed for refilling, so nothing is left waiting behind it.
+    # (Finding 32 -- the first pass has no special case either.)
+    check(sum(1 for i in (0, 1) if i != s.playing and s.bank[i] is not None) == 0,
+          "a boundary switches, freeing the slot that was playing")
     check(s.ready(), "and readiness survives it -- the queue is short, not empty")
     s.tick()          # let the fill add one
     check(s.ready(), "still ready")
