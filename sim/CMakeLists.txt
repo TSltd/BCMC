@@ -707,12 +707,12 @@ add_test(NAME observer_hw_trace
 # the same ordered conversation, and splitting it would mean replaying it
 # several times to check it once.
 add_test(NAME observer_wb_corpus
-         COMMAND bcmc_obs_wb_test ${BCMC_VECTORS}/obswb_edge.txt)
+         COMMAND bcmc_obs_wb_test ${BCMC_VECTORS}/obswb_v2c_edge.txt)
 
 add_test(NAME observer_wb_trace
          COMMAND bcmc_obs_wb_test --limit 4
                  --vcd ${BCMC_WAVES}/bcmc_obs_wb.vcd
-                 ${BCMC_VECTORS}/obswb_edge.txt)
+                 ${BCMC_VECTORS}/obswb_v2c_edge.txt)
 
 # The output engine, every cycle, against validation/output_engine.py's record.
 # `pins_o` is the whole observable contract, so this compares all of it -- there
