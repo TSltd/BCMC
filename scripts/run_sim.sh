@@ -136,8 +136,14 @@ step "6/12  the hardware observer engine satisfies its specification"
 # description into a specification, as it did for the two before it.
 ( cd validation && python3 observer_periph.py ) || die "validation/observer_periph.py"
 ( cd validation && python3 observer_periph_v2c.py ) || die "validation/observer_periph_v2c.py"
+( cd validation && python3 predict_v2c_boundary.py ) || die "validation/predict_v2c_boundary.py"
+( cd validation && python3 gen_observer_wb_v2c.py ) || die "validation/gen_observer_wb_v2c.py"
+( cd validation && python3 diff_v2c_boundary.py ) || die "validation/diff_v2c_boundary.py"
 ( cd validation && python3 test_observer_periph.py ) || die "validation/test_observer_periph.py"
 ( cd validation && python3 test_observer_periph_v2c.py ) || die "validation/test_observer_periph_v2c.py"
+( cd validation && python3 test_predict_v2c_boundary.py ) || die "validation/test_predict_v2c_boundary.py"
+( cd validation && python3 test_gen_observer_wb_v2c.py ) || die "validation/test_gen_observer_wb_v2c.py"
+( cd validation && python3 test_diff_v2c_boundary.py ) || die "validation/test_diff_v2c_boundary.py"
 
 # The bus corpus the peripheral RTL is replayed against, and its first
 # consumer: the model replayer. It treats the corpus as FIXED EXTERNAL input --

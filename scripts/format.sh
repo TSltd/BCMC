@@ -36,6 +36,9 @@ mapfile -t FILES < <(
        validation/gen_observer_hw_vectors.py \
        validation/observer_periph.py validation/test_observer_periph.py \
        validation/observer_periph_v2c.py validation/test_observer_periph_v2c.py \
+       validation/predict_v2c_boundary.py validation/test_predict_v2c_boundary.py \
+       validation/gen_observer_wb_v2c.py validation/test_gen_observer_wb_v2c.py \
+       validation/diff_v2c_boundary.py validation/test_diff_v2c_boundary.py \
        validation/gen_observer_wb_vectors.py \
        validation/replay_observer_wb.py \
        validation/output_engine.py validation/test_output_engine.py \
