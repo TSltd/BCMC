@@ -104,7 +104,16 @@ def engine_view(p):
 
 
 
-def replay(path):
+def replay(path, model=ObserverPeriph, on_rdata=None):
+    """
+    Drive the corpus through `model` and compare.
+
+    `model` is a factory called as `model(N=..., C=...)`, so this same driver can
+    hold a v2.0c model to the same corpus without a second implementation of the
+    driving protocol. `on_rdata`, if given, is called for **every** read-data
+    comparison -- matches included -- so a caller can classify differences rather
+    than only count them.
+    """
     fails = []
     checks = 0
     cycles = 0
@@ -127,7 +136,7 @@ def replay(path):
                          f"file has {len(rows)}")
             continue
         runs += 1
-        p = ObserverPeriph(N=run["N"], C=run["C"])
+        p = model(N=run["N"], C=run["C"])
 
         i = 0
         while i < len(rows):
@@ -188,6 +197,8 @@ def replay(path):
             if resp[F_RDATA] != want:
                 fails.append(f"{name} cycle {i+1}: rdata is "
                              f"{resp[F_RDATA]:#x}, expected {want:#x}")
+            if on_rdata is not None:
+                on_rdata(name, i + 1, row[F_ADR], resp[F_RDATA], want)
             compare(name, i + 1, p, resp)
             p.tick()
             cycles += 1
