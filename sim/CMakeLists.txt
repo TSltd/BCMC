@@ -293,11 +293,18 @@ verilate(bcmc_wb_test
 #---------------------------------------------------------------------------
 # bcmc_obs_wb: the observer's register window, on real wires
 #
-# The whole observer chain under one top: bcmc_obs_wb -> bcmc_observer ->
-# bcmc_column -> bcmc_cell. It is a SEPARATE bus slave from bcmc_wb, sitting in
+# The whole observer chain under one top: bcmc_obs_wb -> bcmc_observer -> the
+# SELECTED traversal source -> bcmc_column -> bcmc_cell. It is a SEPARATE bus
+# slave from bcmc_wb, sitting in
 # its own address region, so it gets its own geometry -- the geometry is what
 # OBS_CAPS reports, and a corpus recorded for one geometry is not valid for
 # another.
+#
+# v2.0c instantiates all THREE sources here, selected or not, so all three are in
+# SOURCES below. That is not only so the file list matches: an unselected source
+# is clocked and keeps its own state, so it has to elaborate. This list is
+# explicit per target, which is why lint.sh -- which searches rtl/ -- does not
+# catch a missing entry here and the build does.
 #
 # These three must match validation/observer_periph.py's REF_MAX_C, REF_VAL_W
 # and REF_IDX_W, which the generator and the replayer both take as defaults, and
@@ -323,6 +330,8 @@ verilate(bcmc_obs_wb_test
   SOURCES ${BCMC_RTL}/bcmc_obs_wb.v
           ${BCMC_RTL}/bcmc_observer.v
           ${BCMC_RTL}/bcmc_src_identity.v
+          ${BCMC_RTL}/bcmc_src_affine.v
+          ${BCMC_RTL}/bcmc_src_shuffled.v
           ${BCMC_RTL}/bcmc_column.v
           ${BCMC_RTL}/bcmc_cell.v
   TOP_MODULE bcmc_obs_wb
