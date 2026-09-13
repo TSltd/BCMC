@@ -440,7 +440,31 @@ the entire reason this source is buffered and the affine source is not.
 
 The measurement already exists — `validation/observer_hw.py`'s
 `bank_fill_cycles(N, seed)`, asserted over the recorded seeds and lengths by
-`test_observer_hw.py` — and this document does not re-derive it.
+`test_observer_hw.py` — and this document does not re-derive it. **`c_fill(N)` is
+that shuffle-work count and nothing else: it is not a wall-clock latency.**
+
+**A bank's fill also costs a per-bank SETUP, and the schedule is serial.**
+`c_fill` counts shuffle steps, so it excludes the fill FSM's entry and the mask
+initialisation that precede them -- and it excludes the fact that one bank's fill
+cannot begin until the previous bank reaches `ST_COMPLETE` (§5.5: one bank at a
+time). The setup is therefore paid **once per bank**, so:
+
+    steady-state fill of one bank   setup + c_fill(N)
+    start-up, LEAD serial banks     LEAD * (setup + c_fill(N))
+    sustained legality              N * R  >=  setup + c_fill(N)
+
+**Decision (finding 34): the overlap policy is SERIAL PER BANK, and that is
+frozen.** The next bank's setup is performed when that bank's serial fill begins;
+it is deliberately not overlapped with the playing bank or with the previous
+fill. The RTL implements this. This section's earlier arithmetic
+(`LEAD * c_fill(N)`) silently assumed `setup = 0`, and the difference is
+observable: with `LEAD = 2`, `N = 2` and `setup > 0`, the first pass's boundary
+can arrive before the alternate bank's fill has even *begun*, so the boundary
+repeats and `SEED_UNDERRUN` asserts where the step-count arithmetic alone would
+predict a handoff. Establishing that required a VCD of the RTL's fill FSM; the
+shuffled model's `bank_and_cost` agrees with `bank_fill_cycles` and consumes it
+exactly, so **the model was never wrong here -- the specification's latency claim
+was incomplete**, and `bank_fill_cycles()` keeps its current meaning.
 
 What matters is where that cost lands. The bank is **read** combinationally, so a
 pass at full rate costs `N` cycles for `N` visits regardless of the fill; the fill
@@ -486,8 +510,9 @@ inequality. A lead of `L` passes buys `L` passes of reserve, not a
 lower sustained rate.
 
 ```text
-   sustained legality     N * R  >=  c_fill(N)          one fill per pass, on average
-   start-up latency       LEAD * c_fill(N)              banks filled before the first pass
+   sustained legality     N * R  >=  setup + c_fill(N)  one fill per pass, on average
+   start-up latency       LEAD * (setup + c_fill(N))    serial banks filled before the
+                                                         first pass (finding 34)
    jitter absorbed        LEAD passes of accumulated deficit
 ```
 
