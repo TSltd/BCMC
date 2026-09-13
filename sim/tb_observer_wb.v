@@ -504,6 +504,15 @@ module tb_observer_wb;
                         disable read_all;
                     end
                     run_name = tok;
+                    // Diagnostic run marker, gated on the same plusarg as the dump so
+                    // it is inert otherwise. It makes the VCD segmentable by NAMED run
+                    // instead of by reset-count inference, which is what the
+                    // fill-ownership comparison needs. Harness-only.
+                    begin : run_marker
+                        reg [8*256-1:0] marker_vcd;
+                        if ($value$plusargs("vcd=%s", marker_vcd))
+                            $display("MARK run %0s at %0t", run_name, $time);
+                    end
                     replay_run;
                     n_runs = n_runs + 1;
                 end else begin
