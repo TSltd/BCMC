@@ -107,6 +107,20 @@ module bcmc_obs_wb #(
     localparam [11:0] OBS_STATUS  = 12'h010;
     localparam [11:0] OBS_PASS    = 12'h014;
     localparam [11:0] OBS_TRIG    = 12'h018;
+    // v2.0c. These three addresses are chosen so that every address the frozen
+    // v2.0a corpus probes as unmapped (0x01C, 0x040, 0x3FC) stays unmapped:
+    // docs/Traversal_Sources_Specification.md section 6.4 reserves them
+    // permanently for exactly that reason.
+    localparam [11:0] OBS_SEED    = 12'h020;   // RW: the traversal source's seed
+    localparam [11:0] OBS_A       = 12'h024;   // RO: the affine's a, 0 until ready
+    localparam [11:0] OBS_B       = 12'h028;   // RO: the affine's b, 0 until ready
+
+    // OBS_CTRL[5:4] is the source selector. 3 names no source and is refused.
+    localparam CTRL_SEL_HI = 5;
+    localparam CTRL_SEL_LO = 4;
+    localparam [1:0] SEL_IDENTITY = 2'd0;
+    localparam [1:0] SEL_AFFINE   = 2'd1;
+    localparam [1:0] SEL_SHUFFLED = 2'd2;
 
     localparam [31:0] ID_VALUE      = 32'h4F425356;   // "OBSV"
     localparam [31:0] VERSION_VALUE = 32'h0000_0100;  // 0.1.0
@@ -137,6 +151,18 @@ module bcmc_obs_wb #(
     reg  [31:0] pass_q;
     reg         eng_aborted_q;     // for detecting the engine's abort edges
 
+    // v2.0c: the selector, the seed, and the window's own copy of N. The copy
+    // exists because N arrives over the read-only observation sideband rather
+    // than as a register, so "did N change?" can only be asked of a register
+    // here -- which is what finding 26's protection is built on.
+    reg  [1:0]       sel_q;
+    reg  [31:0]      seed_q;
+    reg  [VAL_W-1:0] n_q;
+    // The underrun level, latched. The level belongs to the source and the
+    // stickiness lives here, which is what makes clearing it re-assert while the
+    // level is still high (section 8.4 item 5).
+    reg              under_lat;
+
     //-----------------------------------------------------------------------
     // The traversal seam (v2.0c, section 8.2)
     //
@@ -150,13 +176,118 @@ module bcmc_obs_wb #(
 
     wire [VAL_W-1:0] seam_t;
     wire [VAL_W-1:0] seam_pi;
+    wire             seam_ready;
+
+    // The pulse that re-derives a source. Three events earn it and nothing else
+    // does (section 8.4 item 3): an accepted write to OBS_SEED, an accepted write
+    // that actually CHANGES the selector, and a change in N. The re-selection
+    // term is `sel_changed`, not the field, so that re-stating the current
+    // selector -- which every STEP does -- cannot discard a filled bank.
+    //
+    // It doubles as the readiness recovery: the cycle a load is issued is exactly
+    // the one cycle for which SEED_READY is void, for every source (section 7.1).
+    // Expressing it combinationally is what makes that exactly one cycle, and it
+    // is the same wire the sources see.
+    wire sel_changed = wr_ctrl_req & (wb_dat_i[CTRL_SEL_HI:CTRL_SEL_LO] != sel_q);
+    wire n_changed   = (obs_n_i != n_q);
+    wire load_seed   = wr_seed_ok & accept;
+    wire load_sel    = wr_ctrl_ok & accept & sel_changed;
+    wire load_all    = load_seed | load_sel | n_changed;
+
+    // TWO recovery terms, and the difference is not cosmetic.
+    //
+    // `load_all` is what SEED_READY reports, and it includes the selector change
+    // this very write is making: a driver reading STATUS in the cycle it
+    // re-selects must see readiness void, because it is.
+    //
+    // `recovery_start` is what START's admission is judged against, and it must
+    // NOT include this write's own selector change. Otherwise the logic is
+    // circular -- is the write accepted? depends on whether the selector changed;
+    // does that void readiness? depends on whether the write is accepted -- and
+    // the loop is real, not an artefact: a CTRL write carrying both a new
+    // selector and START would oscillate rather than resolve.
+    //
+    // The resolution follows the model, which is what the v2.0c corpus records:
+    // `ObserverPeriphV2C.write` asks `start_acceptable()` BEFORE it applies the
+    // selector change, so such a write is judged on its pre-change readiness and,
+    // if accepted, both the start and the load happen. `recovery_start` is that
+    // reading, expressed in hardware.
+    wire recovery_start = load_seed | n_changed;
+
+    // All three sources are instantiated and clocked whether selected or not, so
+    // an unselected source keeps its own state -- which is why a pass on one does
+    // not disturb a fill in another. Only ts_pi and ready are muxed.
+    wire [VAL_W-1:0] pi_identity;
+    wire [VAL_W-1:0] pi_affine;
+    wire [VAL_W-1:0] pi_shuffled;
+    wire             rdy_affine;
+    wire             rdy_shuffled;
+    wire             under_shuffled;
+    wire [VAL_W-1:0] aff_a;
+    wire [VAL_W-1:0] aff_b;
 
     bcmc_src_identity #(
         .VAL_W (VAL_W)
-    ) u_seam_identity (
+    ) u_src_identity (
         .ts_t  (seam_t),
-        .ts_pi (seam_pi)
+        .ts_pi (pi_identity)
     );
+
+    bcmc_src_affine #(
+        .VAL_W (VAL_W)
+    ) u_src_affine (
+        .clk    (wb_clk_i),
+        .rst    (wb_rst_i),
+        .N      (obs_n_i),
+        .seed   (seed_q),
+        .load   (load_all),
+        .ts_t   (seam_t),
+        .ts_pi  (pi_affine),
+        .ready  (rdy_affine),
+        .a_out  (aff_a),
+        .b_out  (aff_b)
+    );
+
+    bcmc_src_shuffled #(
+        .VAL_W (VAL_W)
+    ) u_src_shuffled (
+        .clk      (wb_clk_i),
+        .rst      (wb_rst_i),
+        .N        (obs_n_i),
+        .seed     (seed_q),
+        .load     (load_all),
+        .ts_t     (seam_t),
+        .ts_pi    (pi_shuffled),
+        .ready    (rdy_shuffled),
+        .underrun (under_shuffled)
+    );
+
+    // The identity is a function of its argument, so it cannot be late: its
+    // contribution to the AND is a constant 1 (section 7.1, which is why
+    // rtl/bcmc_src_identity.v has no ready port). The window's uniform one-cycle
+    // recovery is the `~load_all` term below, and it applies to every source.
+    wire             rdy_identity   = 1'b1;
+    wire [VAL_W-1:0] selected_pi    = (sel_q == SEL_AFFINE)   ? pi_affine
+                                    : (sel_q == SEL_SHUFFLED) ? pi_shuffled
+                                    :                           pi_identity;
+    wire             selected_ready = (sel_q == SEL_AFFINE)   ? rdy_affine
+                                    : (sel_q == SEL_SHUFFLED) ? rdy_shuffled
+                                    :                           rdy_identity;
+
+    assign seam_pi    = selected_pi;
+    assign seam_ready = selected_ready & ~load_all;
+    // What START is admitted against. See `recovery_start` above for why this is
+    // not simply seam_ready.
+    wire   start_ready = selected_ready & ~recovery_start;
+
+    // OBS_A/OBS_B are the affine's REGARDLESS of the selector, and zero before it
+    // is ready -- which is how a driver tells "not derived yet" from a real value
+    // (section 8.4 item 4).
+    wire [VAL_W-1:0] obs_a = rdy_affine ? aff_a : {VAL_W{1'b0}};
+    wire [VAL_W-1:0] obs_b = rdy_affine ? aff_b : {VAL_W{1'b0}};
+    // Zero-extended for the read path, in one place, so the read mux stays a mux.
+    wire [31:0]      obs_a32 = {{(32 - VAL_W){1'b0}}, obs_a};
+    wire [31:0]      obs_b32 = {{(32 - VAL_W){1'b0}}, obs_b};
 
     bcmc_observer #(
         .VAL_W (VAL_W),
@@ -204,34 +335,57 @@ module bcmc_obs_wb #(
     wire hit_status  = (addr == OBS_STATUS);
     wire hit_pass    = (addr == OBS_PASS);
     wire hit_trig    = (addr == OBS_TRIG);
+    wire hit_seed    = (addr == OBS_SEED);
+    wire hit_a       = (addr == OBS_A);
+    wire hit_b       = (addr == OBS_B);
 
     wire mapped = hit_id | hit_version | hit_caps | hit_ctrl | hit_status
-                | hit_pass | hit_trig;
+                | hit_pass | hit_trig | hit_seed | hit_a | hit_b;
+
+    // The selector field decodes like an address: 3 names no source, so a write
+    // carrying it is not decoded at all (E1) rather than being something the
+    // engine would ignore (E4). Section 6.5.
+    wire sel_dec_ok = (wb_dat_i[CTRL_SEL_HI:CTRL_SEL_LO] != 2'd3);
 
     // E4, derived from the engine's acceptance condition rather than declared:
-    // this START, or this STEP, is one the engine would ignore.
-    wire start_ok = ~eng_running & obs_valid_i & (obs_n_i != {VAL_W{1'b0}});
-    wire e4       = (wb_dat_i[0] & ~start_ok) | (wb_dat_i[1] & ~eng_running);
+    // this START, or this STEP, is one the engine would ignore. v2.0c adds the
+    // selected source's readiness to START's condition -- uniformly, for every
+    // source (section 7.2) -- and refuses to re-select a source while a pass is
+    // in flight, which is the same reason START is refused then.
+    wire start_ok    = ~eng_running & obs_valid_i & (obs_n_i != {VAL_W{1'b0}})
+                     & start_ready;
+    wire wr_ctrl_req = sel_ok & hit_ctrl & wb_we_i;
+    wire e4          = (wb_dat_i[0] & ~start_ok)
+                     | (wb_dat_i[1] & ~eng_running)
+                     | (sel_changed & eng_running);
 
     wire rd_ok      = sel_ok & mapped & ~wb_we_i;                 // E1, E2, E3
     wire wr_stat_ok = sel_ok & hit_status & wb_we_i;              // RW1C
-    wire wr_ctrl_ok = sel_ok & hit_ctrl & wb_we_i & ~e4;          // E4
-    wire wr_ok      = wr_stat_ok | wr_ctrl_ok;
+    wire wr_ctrl_ok = wr_ctrl_req & ~e4 & sel_dec_ok;             // E4, E1
+    wire wr_seed_ok = sel_ok & hit_seed & wb_we_i & ~eng_running; // E4
+    wire wr_ok      = wr_stat_ok | wr_ctrl_ok | wr_seed_ok;
 
     // The one-cycle pulses the mux hands the engine, in the accepting cycle.
     assign ctrl_start = wr_ctrl_ok & accept & wb_dat_i[0];
     assign ctrl_step  = wr_ctrl_ok & accept & wb_dat_i[1];
     assign ctrl_reset = wr_ctrl_ok & accept & wb_dat_i[2];
 
-    // Reads. ONESHOT is bit 3; STATUS is RUNNING | DONE | ABORTED.
+    // Reads. ONESHOT is bit 3. STATUS is RUNNING | DONE | ABORTED, and v2.0c adds
+    // SEED_READY as bit 3 -- the LEVEL, not a latch, so it follows the source --
+    // and SEED_UNDERRUN as bit 4, which is latched here. CTRL also reads back the
+    // selector, which is what a driver needs to tell which source it is polling.
     wire [31:0] rdata =
           hit_id      ? ID_VALUE
         : hit_version ? VERSION_VALUE
         : hit_caps    ? CAPS_VALUE
-        : hit_ctrl    ? {28'b0, oneshot_q, 3'b000}
-        : hit_status  ? {29'b0, aborted_q, done_q, eng_running}
+        : hit_ctrl    ? {26'b0, sel_q, oneshot_q, 3'b000}
+        : hit_status  ? {27'b0, under_lat, seam_ready, aborted_q, done_q,
+                         eng_running}
         : hit_pass    ? pass_q
         : hit_trig    ? TRIG_VALUE
+        : hit_seed    ? seed_q
+        : hit_a       ? obs_a32
+        : hit_b       ? obs_b32
         :               32'd0;
 
     //-----------------------------------------------------------------------
@@ -253,6 +407,13 @@ module bcmc_obs_wb #(
             aborted_q     <= 1'b0;
             pass_q        <= 32'd0;
             eng_aborted_q <= 1'b0;
+            // v2.0c. n_q starts at 0 so that a valid context present at reset
+            // produces a load on the first cycle, which is how the sources come
+            // up already derived for the N they are being asked about.
+            sel_q         <= SEL_IDENTITY;
+            seed_q        <= 32'd0;
+            n_q           <= {VAL_W{1'b0}};
+            under_lat     <= 1'b0;
         end else begin
             wb_ack_o <= 1'b0;
             wb_err_o <= 1'b0;
@@ -290,8 +451,29 @@ module bcmc_obs_wb #(
                 end
             end
 
-            // --- the mode bit ----------------------------------------------
-            if (wr_ctrl_ok & accept) oneshot_q <= wb_dat_i[3];
+            // --- the mode bit, the selector, and v2.0c's registers -----------
+            //
+            // A refused write changes nothing at all, which is why every one of
+            // these is gated by the same acceptance term the response uses --
+            // and why a selector is stored only from a write that was accepted.
+            if (wr_ctrl_ok & accept) begin
+                oneshot_q <= wb_dat_i[3];
+                sel_q     <= wb_dat_i[CTRL_SEL_HI:CTRL_SEL_LO];
+            end
+            if (wr_seed_ok & accept) seed_q <= wb_dat_i;
+
+            // The window's copy of N. This is NOT a register in the map: N
+            // arrives over the read-only observation sideband, so the copy is the
+            // only place a change in it can be seen -- and `n_changed`, which
+            // pulses `load` above, is asked of it.
+            n_q <= obs_n_i;
+
+            // SEED_UNDERRUN, set from the sources' level and cleared by writing 1.
+            // The clear is asked second, so a clear and a level in the same cycle
+            // resolve to the clear -- and the level then re-asserts it on the next
+            // cycle, which is what a level-backed RW1C bit has to do.
+            if (under_shuffled) under_lat <= 1'b1;
+            if (wr_stat_ok & accept & wb_dat_i[4]) under_lat <= 1'b0;
         end
     end
 
