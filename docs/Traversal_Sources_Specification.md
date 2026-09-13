@@ -453,6 +453,16 @@ time). The setup is therefore paid **once per bank**, so:
     start-up, LEAD serial banks     LEAD * (setup + c_fill(N))
     sustained legality              N * R  >=  setup + c_fill(N)
 
+**And `setup = 1`, derived from this section's own wording rather than from any
+waveform.** The mask clear is done "at **each fill start**", it is "a single
+assignment" (`mask <= mask & ~bank_mask`), and a shuffle step costs one cycle
+because both of a swap's writes land in the cycle of the accepted draw. So a bank's
+fill is **one clear cycle plus `c_fill(N)` step cycles**, and there is no separate
+fill-FSM entry cycle to add: the entry is coincident with the clear. The question
+"`setup = 1` or `2`" was therefore answerable from the text, and the answer is the
+first -- which also means the RTL, at roughly two edges per bank for `N = 2`, is
+consistent with it rather than carrying an unexplained cycle.
+
 **Decision (finding 34): the overlap policy is SERIAL PER BANK, and that is
 frozen.** The next bank's setup is performed when that bank's serial fill begins;
 it is deliberately not overlapped with the playing bank or with the previous
