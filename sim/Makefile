@@ -148,7 +148,7 @@ VEC_tb_observer_wb_smoke := vectors/obshw_edge.txt
 # which records validation/observer_periph.py answering
 # docs/Observer_Register_Map.md. Same shape as the observer's files: inputs with
 # the model's declared outputs beside them, one run per header.
-VEC_tb_observer_wb := vectors/obswb_edge.txt
+VEC_tb_observer_wb := vectors/obswb_v2c_edge.txt
 
 # The output engine's stimulus corpus: inputs per cycle with the expected pins
 # beside them, from gen_out_engine_vectors.py. It carries no model state -- the
