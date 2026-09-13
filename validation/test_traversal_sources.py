@@ -328,14 +328,15 @@ def test_partial_banks():
 def test_readiness_is_a_contract():
     suite("Layer 2 -- readiness is external, and ready is required, not awaited")
     s = IdentitySource(4)
-    check(not s.ready(), "identity is not ready immediately after construction")
+    check(s.ready(), "identity is ready immediately: a constant 1 (section 7.1)")
+    check(bind_pass(s)(3) == 3, "and bind_pass binds it: pi(3) = 3")
+    a = AffineSource(7, 0x1234)
+    check(not a.ready(), "the affine is NOT ready immediately: it derives")
     try:
-        bind_pass(s)
+        bind_pass(a)
         check(False, "bind_pass accepted a source that is not ready")
     except ValueError:
         check(True, "bind_pass refuses a source that is not ready")
-    s.tick()
-    check(s.ready(), "identity is ready after one cycle (section 7.2)")
     for N in (5, 11):
         a = AffineSource(N, 0x77)
         check(not a.ready(), f"affine N={N} is not instantly ready")
@@ -343,7 +344,7 @@ def test_readiness_is_a_contract():
         while not a.ready():
             a.tick()
         check(a.ready(), f"affine N={N} becomes ready")
-    print("  identity recovers in one cycle; affine waits for its derivation")
+    print("  the identity is never late; the affine waits for its derivation")
     print("  and a pass is refused, never stalled (section 2)")
 
 

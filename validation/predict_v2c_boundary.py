@@ -6,9 +6,8 @@ It drives `sim/vectors/obswb_edge.txt` -- unmodified, and never regenerated --
 through `ObserverPeriphV2C` using the *existing* replayer, and requires the set of
 disagreements to be exactly the documented register extension:
 
-    12 reads at OBS_STATUS (0x010): 0 -> 0x8, or 0x18 with the underrun level
-     4 reads at OBS_CTRL   (0x00C): unchanged, and specifically still 0
-    every other observation:       unchanged
+    Reads: at most 12 at OBS_STATUS (0x010), each frozen -> frozen | 0x8, and 4 at
+    OBS_CTRL (0x00C), each unchanged. Every other observation: unchanged.
 
 Differences are **classified, not counted**. Each one is checked for its address,
 the frozen expected value, the v2.0c value, and the bit delta; a count-only
@@ -37,8 +36,10 @@ VECTOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 OBS_CTRL = 0x00C
 OBS_STATUS = 0x010
 
-# The documented extension: bit 3 SEED_READY, bit 4 SEED_UNDERRUN.
-ALLOWED_DELTAS = (1 << 3, (1 << 3) | (1 << 4))
+# The documented extension: bit 3 SEED_READY, and bit 4 SEED_UNDERRUN where the
+# source reports a missed bank. Nothing else may move.
+ST_READY = 1 << 3
+ST_UNDERRUN = 1 << 4
 EXPECT_STATUS_DIFFS = 12
 EXPECT_CTRL_READS = 4
 
@@ -51,8 +52,12 @@ def main():
 
     seen = []                       # every rdata comparison: (addr, frozen, v2c)
 
-    def on_rdata(name, cycle, addr, frozen, model_value):
-        seen.append((addr, frozen, model_value))
+    def on_rdata(name, cycle, addr, frozen, model_value, is_read):
+        # Only a READ is an observation of the readback contract. A write's
+        # response carries rdata = 0, and counting those is what made "4 OBS_CTRL
+        # reads" read as 20 the first time this check ran.
+        if is_read:
+            seen.append((addr, frozen, model_value))
 
     fails, checks, cycles, runs = replay(path, model=ObserverPeriphV2C,
                                          on_rdata=on_rdata)
@@ -81,15 +86,22 @@ def main():
                             f"{[(hex(f), hex(g)) for f, g in by_addr[addr]]}")
 
     status_diffs = by_addr.get(OBS_STATUS, [])
-    if len(status_diffs) != EXPECT_STATUS_DIFFS:
-        problems.append(f"{len(status_diffs)} OBS_STATUS differences, expected "
-                        f"{EXPECT_STATUS_DIFFS}")
+    if len(status_diffs) > EXPECT_STATUS_DIFFS:
+        problems.append(f"{len(status_diffs)} OBS_STATUS differences, of which "
+                        f"at most {EXPECT_STATUS_DIFFS} can be admissible")
     for frozen, got in status_diffs:
-        if frozen != 0:
-            problems.append(f"an OBS_STATUS read expected {frozen:#x}, not 0")
-        if (got ^ frozen) not in ALLOWED_DELTAS:
+        # The documented extension and nothing else: the acknowledged response
+        # gains bit 3, and bit 4 where the underrun level is present. The frozen
+        # value is whatever the RESPONSE row carries -- it is not assumed to be
+        # 0, and it is not (the twelve are 0x0, 0x1, 0x2 and 0x4).
+        if got not in (frozen | ST_READY, frozen | ST_READY | ST_UNDERRUN):
             problems.append(f"OBS_STATUS moved {frozen:#x} -> {got:#x}, a delta "
-                            f"of {got ^ frozen:#x}, which is not SEED_READY")
+                            f"of {got ^ frozen:#x}, which is not the documented "
+                            f"SEED_READY extension")
+    # A STATUS read is NOT required to differ: bit 3 is a level, and a read landing
+    # inside the one-cycle recovery after a write correctly sees it low, which is
+    # bit-for-bit the frozen value. So the claim is "these twelve may differ, and
+    # only in this way" -- not "these twelve must differ".
 
     # 2. the OBS_CTRL reads must be present AND unchanged -- not merely absent
     #    from the difference list, which an empty list would satisfy too.
@@ -98,12 +110,12 @@ def main():
         problems.append(f"{len(ctrl_reads)} OBS_CTRL reads observed, expected "
                         f"{EXPECT_CTRL_READS}")
     for frozen, got in ctrl_reads:
+        # Readable SELECT is a v2.0c addition, and the frozen cases select the
+        # identity, so bits 5:4 read 0 and the value must be UNCHANGED. The
+        # frozen value is the response row's, whatever it is -- and it is not
+        # always 0: three of the four expect ONESHOT set.
         if frozen != got:
             problems.append(f"an OBS_CTRL read moved {frozen:#x} -> {got:#x}")
-        if frozen != 0:
-            problems.append(f"an OBS_CTRL read expects {frozen:#x}, but the "
-                            f"frozen cases select identity and leave ONESHOT "
-                            f"clear, so it must be 0")
 
     # 3. nothing else may fail, and the new registers must not be touched by a
     #    corpus that predates them.

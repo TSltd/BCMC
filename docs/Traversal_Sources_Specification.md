@@ -932,8 +932,16 @@ and the frozen corpus cannot be replayed across it.** Item 5 above adds bits 3 a
 `SEED_READY` is therefore high, and an acknowledged read of `0x010` answers with
 bit 3 set where v2.0a answered `0`. The frozen corpus reads `0x010` **twelve
 times**, and `sim/bcmc_obs_wb_test.cpp` compares `wb_dat_o` exactly on every
-acknowledged cycle — so all twelve recorded expectations, each of which is `0`,
-become `8`, and `8 | 0x10` wherever a bank was missed.
+acknowledged cycle — so each of the twelve becomes its frozen value with bit 3
+set. The responses are `0x0` (five), `0x1` (four), `0x2` (two, `DONE`) and
+`0x4` (two, `ABORTED`), and `frozen | 0x8` is what v2.0c answers. Eleven
+differ in the event; the twelfth lands inside the one-cycle recovery after a
+write, where bit 3 is correctly low, and so reads bit-for-bit the frozen
+value. Reading this set off the *request* rows rather than the *response*
+rows produced a claim in an earlier revision of this finding that all
+twelve were `0`; the response belongs to the following row, and the
+replayer consumes two rows at a time. The frozen artifact was right and
+the reasoning about it was wrong, twice.
 
 *Classification: not an implementation defect, not a model bug, and not a reason
 to weaken item 5. It is a register-map extension.* This is the cleanest example in
@@ -978,8 +986,9 @@ identical except the acknowledged `0x010` reads, and each of those must equal th
 v2.0a value with `| 0x8` applied because bit 3 is `SEED_READY` (§7.1) — and with
 `| 0x10` as well where a bank was missed. Any difference outside that set, or any
 of those twelve differing by anything but those bits, is a defect and not an
-extension. The twelve `0 → 8` changes are thus a **proof obligation**, and the
-proof is that they are exactly and only the documented additions.
+extension. The twelve `frozen → frozen | 0x8` changes are thus a **proof
+obligation**, and the proof is that they are exactly and only the documented
+additions.
 
 **11. A readable `SELECT`, and why it does not broaden the claim.** `OBS_CTRL`
 reads back bits 5:4 as the selector and bit 3 as `ONESHOT`, with the W1S bits
@@ -1000,6 +1009,36 @@ says: **unchanged** old observations mean compatibility is preserved;
 **documented `STATUS` additions** mean an expected version-boundary difference; and
 **any other difference** means stop and classify. The corpus has not been touched
 to make any of that true, and `obswb_edge.txt` still has no reason to be.
+
+**12. Finding 28: the window's readiness had two model defects, and reset is not a
+load.** The frozen-corpus differ refused the narrow boundary, and the cause was not
+the contract. Two defects, both against section 7.1's own corrected text, both
+found by executing the composition rather than by reading it:
+
+* **Model defect A -- construction-as-load.** `Source.__init__` calls `_on_load()`
+  unconditionally, and `IdentitySource._on_load` set `countdown = 1`, so the
+  identity began unready. Section 7.1 says the identity's contribution to the AND
+  is **a constant `1`** (which is why section 8.1 gives the module no `ready`
+  port), and it lists the events that clear readiness as a write to `OBS_SEED`,
+  the selector, or `N` -- **reset is not among them**. Treating construction as a
+  load imported a post-load countdown into the reset state: an inference, and the
+  model's own docstring claimed the opposite in the same breath.
+* **Model defect B -- recovery-latch ownership.** `Window.ready()` returned
+  `selected().ready()` and never consulted `unready_lat`, so section 7.1's "the
+  window owns the uniform recovery" was not implemented; the recovery lived in the
+  sources instead, and the latch was written and cleared but never read.
+
+The fix follows the specification rather than the gate: the identity is ready as a
+constant, and the window's latch -- set by a seed write, a selector change or a
+change in `N`, cleared by the next clock -- is ANDed with the selected source's
+readiness. **No contract changed and no RTL changed.** The gate then passed:
+eleven differences at `OBS_STATUS`, every delta exactly `0x8`, all four `OBS_CTRL`
+reads unchanged, and no other observation moved.
+
+The lesson is the one the phase keeps teaching: the model's reset state is not
+evidence about what reset means, and `countdown = 1` could never have established
+it. The specification had the answer in one sentence, and only the artifact could
+tell us where it was being contradicted.
 
 ---
 

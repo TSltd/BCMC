@@ -198,7 +198,7 @@ def replay(path, model=ObserverPeriph, on_rdata=None):
                 fails.append(f"{name} cycle {i+1}: rdata is "
                              f"{resp[F_RDATA]:#x}, expected {want:#x}")
             if on_rdata is not None:
-                on_rdata(name, i + 1, row[F_ADR], resp[F_RDATA], want)
+                on_rdata(name, i + 1, row[F_ADR], resp[F_RDATA], want, is_read)
             compare(name, i + 1, p, resp)
             p.tick()
             cycles += 1

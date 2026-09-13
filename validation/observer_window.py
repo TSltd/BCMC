@@ -56,6 +56,12 @@ class Window:
     def __init__(self, N=1, seed=0, bank_n_max=256):
         self.sel = SEL_ID
         self.oneshot = False   # the window's mode bit; part of the CTRL readback
+        # The window's uniform recovery latch (section 7.1). A write to OBS_SEED,
+        # the selector or N sets it, and the next clock clears it, so readiness is
+        # low for exactly one cycle for EVERY source. It is deliberately NOT set
+        # at construction: reset is not among the events section 7.1 lists, so at
+        # reset only the sources' own readiness speaks.
+        self.recovery_q = False
         self.seed = seed & 0xFFFFFFFF
         self.N = N
         self.n_q = N          # the window's own copy of N: the change detector
@@ -77,6 +83,10 @@ class Window:
     #--- helpers -------------------------------------------------------------
 
     def _load_all(self):
+        # A seed write, a selector change and a change in N all arrive here, which
+        # is why the uniform recovery lives here: section 7.1's "for every source"
+        # is then true by construction rather than by three sources agreeing.
+        self.recovery_q = True
         for i, s in enumerate(self.sources):
             s.load(self.seed)
             self.loads[i] += 1          # the count is the window's, and is what
@@ -200,8 +210,9 @@ class Window:
         self.ts_t = ts_t
         for s in self.sources:
             s.tick(ts_t)
-        if not self.selected().ready():
-            self.unready_lat = True
+        self.recovery_q = False             # the recovery is one cycle long
+        if not self.ready():
+            self.unready_lat = True         # the sticky view, recovery included
         if any(s.underrun_flag for s in self.sources):
             self.underrun_seen = True
             self.under_lat = True
@@ -211,8 +222,22 @@ class Window:
         return self.selected().pi(self.ts_t)
 
     def ready(self):
-        """The mux: the selected source's readiness."""
-        return self.selected().ready()
+        """
+        `SEED_READY`: the selected source's readiness AND the window's recovery
+        latch (section 7.1). The window owns the uniform part; a source owns the
+        rest -- the affine's derivation, the shuffled source's lead.
+
+        >>> w = Window(N=4, seed=1)
+        >>> w.ready()                    # at reset nothing has cleared the latch
+        True
+        >>> _ = w.write_seed(1, running=False)
+        >>> w.ready()                    # a write clears it for one cycle
+        False
+        >>> w.tick(0)
+        >>> w.ready()
+        True
+        """
+        return self.selected().ready() and not self.recovery_q
 
     def obs_a(self):
         """

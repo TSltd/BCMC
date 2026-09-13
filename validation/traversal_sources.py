@@ -351,21 +351,29 @@ class Source:
 
 class IdentitySource(Source):
     """
-    `pi(t) = t`, and **not instantly ready after a load** -- section 7.2, and one
-    of the few places the specification deliberately models a behaviour that has
-    no cause.
+    `pi(t) = t`, and **ready as a constant** -- section 7.1:
 
-    Where that recovery belongs: this `ready()` models the **window's** uniform
-    rule, not the module's. `rtl/bcmc_src_identity.v` is one `assign` with no
-    clock and no `ready` port, because `pi(t) = t` is a function and a function of
-    its argument cannot be late -- so the one-cycle recovery after a load is the
-    register window's latch, ANDed with each source's own `ready`. Modelling it
-    here keeps the *system* observable in one place; it is not a claim that the
-    module implements it. (Found by writing the module; section 7.1 now says so.)
+        The identity's contribution to that AND is a constant `1`, which is also
+        why section 8.1's table is right to give it no `ready` port.
+
+    `rtl/bcmc_src_identity.v` is one `assign` with no clock and no `ready` port,
+    because `pi(t) = t` is a function of its argument and a function cannot be
+    late. So this source is never unready -- **not after a load, and not at
+    reset**. The one-cycle recovery after a write to `OBS_SEED`, the selector or
+    `N` is the WINDOW's uniform latch (section 7.1), ANDed with this constant.
+    Modelling it here as well made the identity unready at construction, i.e. at
+    reset, which section 7.1 does not list among the events that clear readiness.
+
+    (This paragraph previously said the opposite -- that this `ready()` modelled
+    the window's rule "to keep the *system* observable in one place". That
+    convenience put the recovery in the wrong layer and imported a post-load
+    countdown into the reset state. It is a model defect against the frozen
+    contract, and the frozen-corpus differ caught it: eight of the frozen
+    corpus's eleven START writes land in cycle 0.)
 
     >>> s = IdentitySource(4)
-    >>> s.ready()
-    False
+    >>> s.ready()                    # a constant 1, at reset and after a load
+    True
     >>> s.tick()
     >>> s.ready()
     True
@@ -376,7 +384,10 @@ class IdentitySource(Source):
     kind = "identity"
 
     def _on_load(self):
-        self.countdown = 1
+        # A constant 1 (section 7.1): a load does not make a function of its
+        # argument late. The window's latch provides the uniform one-cycle
+        # recovery for every source, this one included -- see Window._load_all.
+        self.countdown = 0
 
     def tick(self, ts_t=0):
         self.countdown = max(0, self.countdown - 1)
