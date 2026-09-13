@@ -1040,6 +1040,46 @@ evidence about what reset means, and `countdown = 1` could never have establishe
 it. The specification had the answer in one sentence, and only the artifact could
 tell us where it was being contradicted.
 
+**13. Finding 29: `N < 1` is outside the source domain, and the window must say
+so.** The frozen corpus's `n_zero_refuses_start` run presents `N = 0`; it exists to
+check that the *engine* refuses a START there (§3.4), and under v2.0a it did,
+because v2.0a had no source instance for `N = 0` to reach. **v2.0c instantiates all
+three sources always**, so that run now exercises the source layer too, and found
+the hole:
+
+    bcmc_src_affine: ERROR a = 0 >= N = 0 (section 4.2)
+    %Error: rtl/bcmc_src_affine.v:388: Verilog $stop
+
+The affine derived for `N = 0` -- completing with `a = 0`, so `ready_q` -- and then
+its own precondition fired, because `a < N` cannot hold at `N = 0`. Note that its
+`restart = load || (N != n_q)` detector means suppressing `load` alone would not
+have prevented this: the source reacts to `N` itself, so it is the *reset* that has
+to keep it out of an illegal state.
+
+*This is a cross-layer defect -- an RTL violation of a source-domain precondition,
+exposed by an underspecified window -- and not a corpus or model problem.* The model
+already answers it: `ObserverPeriphV2C` constructs **no** `Window` for `N < 1`, so
+`seed_ready()` is false and the source-domain invariant is never asked to hold.
+Found by the primary differential, before any broader regression, which is the order
+that exists to catch exactly this.
+
+Stated as a rule, so the window has a defined responsibility at the boundary:
+
+> For `N < 1` no traversal source exists: source readiness is `0`, no source load
+> occurs, and the source instances are held reset. `START` is consequently refused,
+> as it already was by §3.4's `N >= 1`.
+
+**The sources' own guards are not weakened to accommodate this.** Making `a = 0`
+tolerable at `N = 0` would turn an out-of-domain window condition into a
+source-level exception and weaken a verified invariant. The window is the component
+that knows the context is unusable, so the window is where it is handled -- and the
+readiness force is a statement about the *context*, not a redefinition of the
+identity's constant 1.
+
+The frozen stimulus that exposed this is not changed. `n_zero_refuses_start` stays
+exactly as it is, and becomes the falsifier again once the contract and the RTL
+agree.
+
 ---
 
 ## 9. What v2.0c does not solve

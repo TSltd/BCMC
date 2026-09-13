@@ -190,9 +190,18 @@ module bcmc_obs_wb #(
     // is the same wire the sources see.
     wire sel_changed = wr_ctrl_req & (wb_dat_i[CTRL_SEL_HI:CTRL_SEL_LO] != sel_q);
     wire n_changed   = (obs_n_i != n_q);
+
+    // `N < 1` is outside every source's domain (section 3.4), and the model's
+    // answer -- which this mirrors -- is that no source exists at all. In
+    // hardware the instances are necessarily present, so they are HELD RESET and
+    // readiness is forced low instead. Suppressing `load` here would not be
+    // enough: bcmc_src_affine re-derives on `N != n_q` by itself, so it has to be
+    // the reset that keeps it out of an illegal `N = 0` state.
+    wire no_source   = (obs_n_i == {VAL_W{1'b0}});
+
     wire load_seed   = wr_seed_ok & accept;
     wire load_sel    = wr_ctrl_ok & accept & sel_changed;
-    wire load_all    = load_seed | load_sel | n_changed;
+    wire load_all    = (load_seed | load_sel | n_changed) & ~no_source;
 
     // TWO recovery terms, and the difference is not cosmetic.
     //
@@ -237,7 +246,7 @@ module bcmc_obs_wb #(
         .VAL_W (VAL_W)
     ) u_src_affine (
         .clk    (wb_clk_i),
-        .rst    (wb_rst_i),
+        .rst    (wb_rst_i | no_source),
         .N      (obs_n_i),
         .seed   (seed_q),
         .load   (load_all),
@@ -252,7 +261,7 @@ module bcmc_obs_wb #(
         .VAL_W (VAL_W)
     ) u_src_shuffled (
         .clk      (wb_clk_i),
-        .rst      (wb_rst_i),
+        .rst      (wb_rst_i | no_source),
         .N        (obs_n_i),
         .seed     (seed_q),
         .load     (load_all),
@@ -275,10 +284,15 @@ module bcmc_obs_wb #(
                                     :                           rdy_identity;
 
     assign seam_pi    = selected_pi;
-    assign seam_ready = selected_ready & ~load_all;
+    // Readiness is forced low at `N < 1`, where no source exists -- so the
+    // identity's legal-domain constant 1 is not allowed to leak into a context
+    // that has no source at all. The identity's contract is unchanged; what is
+    // added is the window's own answer for an unusable context (finding 29).
+    assign seam_ready = ~no_source & selected_ready & ~load_all;
     // What START is admitted against. See `recovery_start` above for why this is
-    // not simply seam_ready.
-    wire   start_ready = selected_ready & ~recovery_start;
+    // not simply seam_ready. `START` is refused at `N < 1` by this term and by
+    // section 3.4's own `N >= 1`, which is belt and braces on purpose.
+    wire   start_ready = ~no_source & selected_ready & ~recovery_start;
 
     // OBS_A/OBS_B are the affine's REGARDLESS of the selector, and zero before it
     // is ready -- which is how a driver tells "not derived yet" from a real value
