@@ -463,6 +463,20 @@ module tb_observer_wb;
         O_FLAT      = {(MAX_C*VAL_W){1'b0}};
         #1;
 
+        // Diagnostic dump, gated on +vcd=<path>. With no such plusarg the bench
+        // behaves and fails exactly as before and writes no file. With one, the
+        // WHOLE hierarchy is dumped so that internal state -- the shuffled
+        // source's st0_q/st1_q/playing_q/underrun_q, the engine's col_q/tq -- can
+        // be aligned against the model's per-edge table. Harness-only diagnostic:
+        // no RTL, model, corpus or expectation changes with it.
+        begin : vcd_dump
+            reg [8*256-1:0] vcdfile;
+            if ($value$plusargs("vcd=%s", vcdfile)) begin
+                $dumpfile(vcdfile);
+                $dumpvars(0, tb_observer_wb);
+            end
+        end
+
         if (!$value$plusargs("vectors=%s", vecfile)) begin
             $display("FAIL  tb_observer_wb: no +vectors=<file> given");
             $finish;
